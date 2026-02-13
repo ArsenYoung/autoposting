@@ -3,13 +3,20 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterator
 
 import psycopg
 import pytest
 import requests
+from dotenv import load_dotenv
 
 from helpers import WaitConfig, sha256_hex
+
+# Load local test env vars (ignored by git) if present.
+_DOTENV_PATH = Path(__file__).with_name(".env")
+if _DOTENV_PATH.exists():
+    load_dotenv(dotenv_path=_DOTENV_PATH, override=False)
 
 
 @dataclass(frozen=True)

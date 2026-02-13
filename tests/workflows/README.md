@@ -38,9 +38,12 @@ Fill `.env`:
 ## Run
 ```bash
 cd tests/workflows
-set -a; source .env; set +a
 pytest -q
 ```
+
+Notes:
+- If you have a `tests/workflows/.env`, it will be loaded automatically.
+- Alternatively, you can still `set -a; source .env; set +a`, but make sure to quote values with spaces (e.g. `N8N_WEBHOOK_AUTH_VALUE="Bearer ..."`).
 
 ## Test strategy
 - Each test creates an isolated workspace + endpoints + channels in DB.

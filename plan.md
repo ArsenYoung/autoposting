@@ -10,8 +10,8 @@
   - `01_ingest` (push + pull)
   - `02_dispatcher`
   - `03_monitor`
-  - `adapter_telegram_send`
-  - `adapter_max_send`
+  - ~~`adapter_telegram_send`~~
+  - ~~`adapter_max_send`~~
 - Дополнительный контур (P1):
   - `11_bot_ingest`
   - `12_bot_engine`
@@ -27,18 +27,18 @@
 ## 4. Этапы работ
 
 ## Этап 0. Подготовка n8n-проекта
-- Создать структуру в репозитории для артефактов n8n:
-  - `n8n/workflows/`
-  - `n8n/env/.env.example`
-  - `n8n/docs/` (короткие runbook-инструкции)
-- Согласовать naming:
-  - `01_ingest`, `02_dispatcher`, `03_monitor`
-  - `11_bot_ingest`, `12_bot_engine`, `13_bot_monitor`
-  - `adapter_telegram_send`, `adapter_max_send`
-- Зафиксировать переменные окружения для webhook/auth и runtime-порогов (из `docs/workflows.md`).
+- ~~Создать структуру в репозитории для артефактов n8n:~~
+  - ~~`n8n/workflows/`~~
+  - ~~`n8n/env/.env.example`~~
+  - ~~`n8n/docs/` (короткие runbook-инструкции)~~
+- ~~Согласовать naming:~~
+  - ~~`01_ingest`, `02_dispatcher`, `03_monitor`~~
+  - ~~`11_bot_ingest`, `12_bot_engine`, `13_bot_monitor`~~
+  - ~~`adapter_telegram_send`, `adapter_max_send`~~
+- ~~Зафиксировать переменные окружения для webhook/auth и runtime-порогов (из `docs/workflows.md`).~~
 
-Критерий готовности:
-- Есть шаблон структуры и список env-переменных для всех workflow.
+~~Критерий готовности:~~
+- ~~Есть шаблон структуры и список env-переменных для всех workflow.~~
 
 Статус на 2026-02-13:
 - Выполнено.
@@ -48,16 +48,16 @@
   - `n8n/docs/runbook.md`
 
 ## Этап 1. Адаптеры отправки (сначала sub-workflows)
-- Реализовать `adapter_telegram_send`:
-  - normalized input/output контракт
-  - media materialization cache через `media_blobs`
-  - нормализация ошибок (`TRANSIENT|PERMANENT`, `scope`, `code`, `retry_after_ms`)
-- Реализовать `adapter_max_send`:
-  - upload flow (`/uploads` -> upload -> `/messages`)
-  - parse mode mapping (`HTML|Markdown|None`)
-  - поддержка media series с `series_progress_delta`
-  - нормализация ошибок и обработка `attachment.not.ready` как transient
-- Добавить webhook smoke входы для обоих адаптеров (для `WF_ADAPTER_*_WEBHOOK_URL`).
+- ~~Реализовать `adapter_telegram_send`:~~
+  - ~~normalized input/output контракт~~
+  - ~~media materialization cache через `media_blobs`~~
+  - ~~нормализация ошибок (`TRANSIENT|PERMANENT`, `scope`, `code`, `retry_after_ms`)~~
+- ~~Реализовать `adapter_max_send`:~~
+  - ~~upload flow (`/uploads` -> upload -> `/messages`)~~
+  - ~~parse mode mapping (`HTML|Markdown|None`)~~
+  - ~~поддержка media series с `series_progress_delta`~~
+  - ~~нормализация ошибок и обработка `attachment.not.ready` как transient~~
+- ~~Добавить webhook smoke входы для обоих адаптеров (для `WF_ADAPTER_*_WEBHOOK_URL`).~~
 
 Критерий готовности:
 - Smoke тесты адаптеров из `tests/workflows/test_workflows_webhooks.py` проходят.
@@ -126,8 +126,8 @@
 - Все обязательные тесты зелёные, workflow экспортированы, runbook оформлен.
 
 ## 5. Последовательность выполнения
-1. Этап 0
-2. Этап 1
+1. ~~Этап 0~~
+2. ~~Этап 1~~
 3. Этап 2
 4. Этап 3
 5. Этап 4

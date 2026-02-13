@@ -1,0 +1,209 @@
+{
+  "name": "adapter_max_send",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "max-exec-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -976,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "autoposting-adapter-max-test",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "max-webhook-trigger",
+      "name": "Adapter MAX Smoke Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -976,
+        368
+      ],
+      "webhookId": "a8ca47e0-4b6c-4117-97af-728a65b88a42"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $input.first()?.json?.body ?? $input.first()?.json ?? {};\nconst delivery = src.delivery ?? {};\nconst channel = src.channel ?? {};\nconst payload = delivery.payload ?? {};\nconst media = Array.isArray(payload.media) ? payload.media : [];\n\nconst renderedText = String(\n  delivery.rendered_text ?? src.rendered_text ?? payload.text ?? '',\n);\n\nconst parseModeRaw = String(\n  delivery.meta?.parse_mode ?? src.meta?.parse_mode ?? 'None',\n);\nlet maxFormat = null;\nif (parseModeRaw === 'HTML') maxFormat = 'html';\nif (parseModeRaw === 'Markdown' || parseModeRaw === 'MarkdownV2') maxFormat = 'markdown';\n\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\n\nconst authHeaderName = String(\n  channel.auth_header_name ?? env.MAX_AUTH_HEADER ?? 'Authorization',\n);\nconst authHeaderValue = String(\n  channel.max_auth ?? channel.auth_token ?? env.MAX_AUTH_VALUE ?? '',\n).trim();\n\nlet baseUrl = String(\n  channel.max_base_url ?? channel.base_url ?? env.MAX_API_BASE_URL ?? 'https://api.max.ru',\n);\nwhile (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);\n\nreturn [\n  {\n    json: {\n      workspace_id: src.workspace_id ?? null,\n      delivery,\n      channel,\n      target_id: channel.target_id ?? delivery.target_id ?? src.target_id ?? null,\n      rendered_text: renderedText,\n      media,\n      max_format: maxFormat,\n      max_base_url: baseUrl,\n      auth_header_name: authHeaderName,\n      auth_header_value: authHeaderValue,\n    },\n  },\n];"
+      },
+      "id": "max-normalize-input",
+      "name": "Normalize Adapter Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "max-cond-can-call",
+              "leftValue": "={{ !!$json.target_id && !!$json.auth_header_value }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "max-if-can-call-api",
+      "name": "Can Call MAX API?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -528,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\nreturn [\n  {\n    json: {\n      ok: true,\n      provider_message_id: `max-mock-${Date.now()}`,\n      raw: {\n        simulated: true,\n        reason: 'missing target_id or MAX auth header',\n        target_id: input.target_id ?? null,\n      },\n    },\n  },\n];"
+      },
+      "id": "max-simulate-success",
+      "name": "Simulate MAX Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst fetchFn = globalThis.fetch;\nif (typeof fetchFn !== 'function') {\n  return [\n    {\n      json: {\n        ok: false,\n        error: {\n          category: 'TRANSIENT',\n          scope: 'platform',\n          code: 'fetch_unavailable',\n          message: 'global fetch is not available in n8n Code node runtime',\n          raw: { node_version: process.version },\n        },\n      },\n    },\n  ];\n}\n\nlet baseUrl = String(input.max_base_url || '');\nwhile (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);\n\nconst targetId = input.target_id;\nconst text = String(input.rendered_text ?? '');\nconst media = Array.isArray(input.media) ? input.media : [];\nconst format = input.max_format || null;\n\nconst authHeaderName = String(input.auth_header_name || 'Authorization');\nconst authHeaderValue = String(input.auth_header_value || '').trim();\n\nconst maxTextLimit = Number(process.env.ADAPTER_MAX_TEXT_LIMIT || 4000);\nif (Number.isFinite(maxTextLimit) && text.length > maxTextLimit) {\n  return [\n    {\n      json: {\n        ok: false,\n        error: {\n          category: 'PERMANENT',\n          scope: 'delivery',\n          code: 'message_too_long',\n          message: `MAX message too long: len=${text.length} > limit=${maxTextLimit}`,\n          raw: { len: text.length, limit: maxTextLimit },\n        },\n      },\n    },\n  ];\n}\n\nif (!baseUrl || !targetId || !authHeaderValue) {\n  return [\n    {\n      json: {\n        ok: false,\n        error: {\n          category: 'PERMANENT',\n          scope: 'delivery',\n          code: 'missing_adapter_inputs',\n          message:\n            'adapter_max_send requires target_id, MAX_API_BASE_URL, and auth header value',\n          raw: {\n            has_base_url: !!baseUrl,\n            has_target_id: !!targetId,\n            has_auth: !!authHeaderValue,\n          },\n        },\n      },\n    },\n  ];\n}\n\nconst headersAuth = { [authHeaderName]: authHeaderValue };\n\nconst timeoutMsMessage = Number(process.env.MAX_MESSAGE_TIMEOUT_SEC || 30) * 1000;\nconst timeoutMsUpload = Number(process.env.MAX_UPLOAD_TIMEOUT_SEC || 60) * 1000;\nconst timeoutMsDownload = Number(process.env.DOWNLOAD_TIMEOUT_MS || 30000);\n\nconst fetchWithTimeout = async (url, opts, timeoutMs) => {\n  const controller = new AbortController();\n  const timeout = setTimeout(() => controller.abort(), timeoutMs);\n  try {\n    return await fetchFn(url, { ...opts, signal: controller.signal });\n  } finally {\n    clearTimeout(timeout);\n  }\n};\n\nconst safeJsonParse = (textValue) => {\n  if (!textValue) return { value: null };\n  try {\n    return { value: JSON.parse(textValue) };\n  } catch {\n    return { value: { _raw: textValue } };\n  }\n};\n\nconst extractMessage = (body, fallback) => {\n  if (typeof body === 'string') return { value: body };\n  const msg =\n    body?.message ??\n    body?.description ??\n    body?.detail ??\n    body?.error?.message ??\n    body?.error?.description ??\n    body?.error ??\n    body?.reason;\n  return { value: String(msg ?? fallback ?? 'max_request_failed') };\n};\n\nconst parseRetryAfterMs = (respHeaders, body, message) => {\n  const headerValue = respHeaders?.get?.('retry-after');\n  if (headerValue) {\n    const sec = Number(headerValue);\n    if (Number.isFinite(sec) && sec > 0) return { value: sec * 1000 };\n  }\n\n  const retrySec = Number(\n    body?.retry_after ?? body?.retryAfter ?? body?.error?.retry_after,\n  );\n  if (Number.isFinite(retrySec) && retrySec > 0) return { value: retrySec * 1000 };\n\n  const match = String(message || '').match(/retry after\\s*(\\d+)/i);\n  if (match) {\n    const sec = Number(match[1]);\n    if (Number.isFinite(sec) && sec > 0) return { value: sec * 1000 };\n  }\n\n  return { value: null };\n};\n\nconst classifyError = ({ status, body, message, respHeaders, stage, raw }) => {\n  const msg = String(message ?? 'max_send_failed');\n  const statusNum = Number(status ?? 0);\n\n  let category = 'PERMANENT';\n  let scope = 'delivery';\n  let code = 'max_bad_request';\n\n  if (/attachment\\.not\\.ready/i.test(msg)) {\n    category = 'TRANSIENT';\n    scope = 'delivery';\n    code = 'attachment_not_ready';\n  } else if (\n    statusNum === 429 ||\n    /rate limit|too many requests|retry after/i.test(msg)\n  ) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    code = 'rate_limited';\n  } else if (\n    statusNum >= 500 ||\n    /timeout|timed out|network|socket|econn|etimedout/i.test(msg)\n  ) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    code = 'upstream_unavailable';\n  } else if (\n    statusNum === 401 ||\n    statusNum === 403 ||\n    /unauthorized|forbidden|access denied/i.test(msg)\n  ) {\n    category = 'PERMANENT';\n    scope = 'channel';\n    code = 'channel_unavailable';\n  }\n\n  const retryAfterWrap = parseRetryAfterMs(respHeaders, body, msg);\n  const retryAfterMs = retryAfterWrap.value;\n\n  return {\n    category,\n    scope,\n    code,\n    retry_after_ms: Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,\n    message: msg,\n    raw: {\n      stage,\n      status: statusNum || undefined,\n      body,\n      raw,\n    },\n  };\n};\n\nconst requestJson = async ({ url, method, body, timeoutMs, stage }) => {\n  const headers = {\n    ...headersAuth,\n    'Content-Type': 'application/json',\n  };\n\n  let resp;\n  try {\n    resp = await fetchWithTimeout(\n      url,\n      {\n        method,\n        headers,\n        body: body === undefined ? undefined : JSON.stringify(body),\n      },\n      timeoutMs,\n    );\n  } catch (e) {\n    const message = e?.name === 'AbortError' ? 'timeout' : String(e?.message ?? e);\n    return {\n      ok: false,\n      status: 0,\n      body: null,\n      message,\n      error: classifyError({\n        status: 0,\n        body: null,\n        message,\n        respHeaders: null,\n        stage,\n        raw: { kind: 'fetch_error' },\n      }),\n    };\n  }\n\n  const textValue = await resp.text().catch(() => '');\n  const parsedWrap = safeJsonParse(textValue);\n  const parsed = parsedWrap.value;\n\n  if (!resp.ok) {\n    const messageWrap = extractMessage(parsed ?? textValue, `http_${resp.status}`);\n    const message = messageWrap.value;\n    return {\n      ok: false,\n      status: resp.status,\n      body: parsed ?? textValue,\n      message,\n      error: classifyError({\n        status: resp.status,\n        body: parsed ?? textValue,\n        message,\n        respHeaders: resp.headers,\n        stage,\n        raw: null,\n      }),\n    };\n  }\n\n  return {\n    ok: true,\n    status: resp.status,\n    body: parsed,\n    message: null,\n    error: null,\n  };\n};\n\nconst requestBinary = async ({ url, timeoutMs, stage }) => {\n  let resp;\n  try {\n    resp = await fetchWithTimeout(url, { method: 'GET' }, timeoutMs);\n  } catch (e) {\n    const message = e?.name === 'AbortError' ? 'timeout' : String(e?.message ?? e);\n    return {\n      ok: false,\n      status: 0,\n      buffer: null,\n      contentType: null,\n      error: classifyError({\n        status: 0,\n        body: null,\n        message,\n        respHeaders: null,\n        stage,\n        raw: { kind: 'fetch_binary_error' },\n      }),\n    };\n  }\n\n  if (!resp.ok) {\n    const textValue = await resp.text().catch(() => '');\n    const parsedWrap = safeJsonParse(textValue);\n    const parsed = parsedWrap.value;\n    const messageWrap = extractMessage(parsed ?? textValue, `http_${resp.status}`);\n    const message = messageWrap.value;\n\n    return {\n      ok: false,\n      status: resp.status,\n      buffer: null,\n      contentType: resp.headers?.get?.('content-type') ?? null,\n      error: classifyError({\n        status: resp.status,\n        body: parsed ?? textValue,\n        message,\n        respHeaders: resp.headers,\n        stage,\n        raw: null,\n      }),\n    };\n  }\n\n  const arrayBuffer = await resp.arrayBuffer();\n  const buffer = Buffer.from(arrayBuffer);\n\n  return {\n    ok: true,\n    status: resp.status,\n    buffer,\n    contentType: resp.headers?.get?.('content-type') ?? null,\n    error: null,\n  };\n};\n\nconst uploadMultipart = async ({ url, buffer, contentType, timeoutMs, stage }) => {\n  if (typeof FormData !== 'function' || typeof Blob !== 'function') {\n    return {\n      ok: false,\n      status: 0,\n      error: classifyError({\n        status: 0,\n        body: null,\n        message: 'FormData/Blob is not available in runtime',\n        respHeaders: null,\n        stage,\n        raw: { kind: 'multipart_unavailable' },\n      }),\n    };\n  }\n\n  const fd = new FormData();\n  const blob = new Blob([buffer], {\n    type: contentType || 'application/octet-stream',\n  });\n  fd.append('data', blob, 'file');\n\n  let resp;\n  try {\n    resp = await fetchWithTimeout(\n      url,\n      {\n        method: 'POST',\n        body: fd,\n      },\n      timeoutMs,\n    );\n  } catch (e) {\n    const message = e?.name === 'AbortError' ? 'timeout' : String(e?.message ?? e);\n    return {\n      ok: false,\n      status: 0,\n      error: classifyError({\n        status: 0,\n        body: null,\n        message,\n        respHeaders: null,\n        stage,\n        raw: { kind: 'upload_fetch_error' },\n      }),\n    };\n  }\n\n  if (!resp.ok) {\n    const textValue = await resp.text().catch(() => '');\n    const parsedWrap = safeJsonParse(textValue);\n    const parsed = parsedWrap.value;\n    const messageWrap = extractMessage(parsed ?? textValue, `http_${resp.status}`);\n    const message = messageWrap.value;\n\n    return {\n      ok: false,\n      status: resp.status,\n      error: classifyError({\n        status: resp.status,\n        body: parsed ?? textValue,\n        message,\n        respHeaders: resp.headers,\n        stage,\n        raw: null,\n      }),\n    };\n  }\n\n  return { ok: true, status: resp.status, error: null };\n};\n\nconst sendMessage = async ({ attachments }) => {\n  const payload = {\n    chat_id: targetId,\n    text,\n  };\n  if (format) payload.format = format;\n  if (attachments) payload.attachments = attachments;\n\n  return await requestJson({\n    url: `${baseUrl}/messages`,\n    method: 'POST',\n    body: payload,\n    timeoutMs: timeoutMsMessage,\n    stage: 'send_message',\n  });\n};\n\nconst pickUploadFields = (body) => {\n  const uploadId = body?.upload_id ?? body?.id ?? body?.data?.id ?? null;\n  const uploadUrl =\n    body?.upload_url ??\n    body?.url ??\n    body?.data?.upload_url ??\n    body?.data?.url ??\n    null;\n  return { uploadId, uploadUrl };\n};\n\nif (media.length === 0) {\n  const resp = await sendMessage({ attachments: null });\n  if (!resp.ok) {\n    return [{ json: { ok: false, error: resp.error } }];\n  }\n\n  const providerMessageId =\n    resp.body?.message_id ??\n    resp.body?.id ??\n    resp.body?.data?.id ??\n    `max-${Date.now()}`;\n\n  return [\n    {\n      json: {\n        ok: true,\n        provider_message_id: String(providerMessageId),\n        raw: resp.body,\n      },\n    },\n  ];\n}\n\nconst seriesProgressDelta = { acked_indexes: [] };\nconst seriesResults = [];\n\nfor (let index = 0; index < media.length; index += 1) {\n  const item = media[index];\n  if (!item || typeof item !== 'object') continue;\n\n  const kindRaw = String(item.type ?? item.kind ?? '').toLowerCase();\n  const uploadType = kindRaw.includes('video') ? 'video' : 'image';\n\n  const existingToken =\n    item.upload_id ?? item.file_id ?? item.token ?? item.max_upload_id ?? null;\n\n  let uploadId = existingToken ? String(existingToken) : null;\n\n  if (!uploadId) {\n    const originUrl = item.origin_url ?? item.url ?? item.media_url ?? null;\n    if (!originUrl) {\n      return [\n        {\n          json: {\n            ok: false,\n            error: {\n              category: 'PERMANENT',\n              scope: 'delivery',\n              code: 'media_missing_origin',\n              message: `media[${index}] missing origin_url/url/media_url`,\n              raw: { index, item },\n            },\n            series_progress_delta: seriesProgressDelta,\n            raw: { series_results: seriesResults },\n          },\n        },\n      ];\n    }\n\n    const create = await requestJson({\n      url: `${baseUrl}/uploads?type=${encodeURIComponent(uploadType)}`,\n      method: 'POST',\n      body: {},\n      timeoutMs: timeoutMsUpload,\n      stage: 'create_upload',\n    });\n    if (!create.ok) {\n      return [\n        {\n          json: {\n            ok: false,\n            error: create.error,\n            series_progress_delta: seriesProgressDelta,\n            raw: { series_results: seriesResults },\n          },\n        },\n      ];\n    }\n\n    const { uploadId: createdId, uploadUrl } = pickUploadFields(create.body);\n    if (!createdId || !uploadUrl) {\n      return [\n        {\n          json: {\n            ok: false,\n            error: {\n              category: 'TRANSIENT',\n              scope: 'platform',\n              code: 'upload_session_unexpected',\n              message: 'MAX upload session response missing upload_id/upload_url',\n              raw: { body: create.body },\n            },\n            series_progress_delta: seriesProgressDelta,\n            raw: { series_results: seriesResults },\n          },\n        },\n      ];\n    }\n\n    const downloaded = await requestBinary({\n      url: String(originUrl),\n      timeoutMs: timeoutMsDownload,\n      stage: 'download_origin',\n    });\n    if (!downloaded.ok) {\n      return [\n        {\n          json: {\n            ok: false,\n            error: downloaded.error,\n            series_progress_delta: seriesProgressDelta,\n            raw: { series_results: seriesResults },\n          },\n        },\n      ];\n    }\n\n    const uploaded = await uploadMultipart({\n      url: String(uploadUrl),\n      buffer: downloaded.buffer,\n      contentType: downloaded.contentType,\n      timeoutMs: timeoutMsUpload,\n      stage: 'upload_binary',\n    });\n    if (!uploaded.ok) {\n      return [\n        {\n          json: {\n            ok: false,\n            error: uploaded.error,\n            series_progress_delta: seriesProgressDelta,\n            raw: { series_results: seriesResults },\n          },\n        },\n      ];\n    }\n\n    uploadId = String(createdId);\n  }\n\n  const msg = await sendMessage({ attachments: [{ upload_id: uploadId }] });\n  if (!msg.ok) {\n    return [\n      {\n        json: {\n          ok: false,\n          error: msg.error,\n          series_progress_delta: seriesProgressDelta,\n          raw: { series_results: seriesResults },\n        },\n      },\n    ];\n  }\n\n  const providerMessageId =\n    msg.body?.message_id ?? msg.body?.id ?? msg.body?.data?.id ?? `max-${Date.now()}`;\n\n  seriesProgressDelta.acked_indexes.push(index);\n  seriesResults.push({\n    index,\n    upload_id: uploadId,\n    provider_message_id: String(providerMessageId),\n    raw: msg.body,\n  });\n}\n\nconst primaryProviderMessageId =\n  seriesResults[0]?.provider_message_id ?? `max-${Date.now()}`;\n\nreturn [\n  {\n    json: {\n      ok: true,\n      provider_message_id: String(primaryProviderMessageId),\n      series_progress_delta: seriesProgressDelta,\n      raw: { series_results: seriesResults },\n    },\n  },\n];"
+      },
+      "id": "max-send-code",
+      "name": "MAX Send (Code)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nif (input?.ok === true || input?.ok === false) {\n  return [{ json: input }];\n}\n\nreturn [\n  {\n    json: {\n      ok: false,\n      error: {\n        category: 'TRANSIENT',\n        scope: 'platform',\n        code: 'adapter_output_unexpected',\n        message: 'adapter_max_send returned unexpected payload shape',\n        raw: input,\n      },\n    },\n  },\n];"
+      },
+      "id": "max-finalize",
+      "name": "Finalize Adapter Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        256
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize Adapter Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adapter MAX Smoke Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Adapter Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Adapter Input": {
+      "main": [
+        [
+          {
+            "node": "Can Call MAX API?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Call MAX API?": {
+      "main": [
+        [
+          {
+            "node": "MAX Send (Code)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Simulate MAX Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate MAX Success": {
+      "main": [
+        [
+          {
+            "node": "Finalize Adapter Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAX Send (Code)": {
+      "main": [
+        [
+          {
+            "node": "Finalize Adapter Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "f282c70d-e0b1-4dfd-acfa-1c3148f6d28b",
+  "meta": {
+    "instanceId": "ac845f023808ccf31cb6cf4b5e79d811bd2246113c33a345a99a14afb7f8967b"
+  },
+  "id": "Vmk0MqDaJDFos5sM",
+  "tags": []
+}

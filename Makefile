@@ -2,7 +2,10 @@ SHELL := /bin/bash
 
 .DEFAULT_GOAL := help
 
-WF_TEST_DIR := tests/workflows
+# Absolute paths so targets work regardless of where `make` is invoked from.
+ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+
+WF_TEST_DIR := $(ROOT)/tests/workflows
 WF_VENV := $(WF_TEST_DIR)/.venv
 WF_PY := $(WF_VENV)/bin/python
 WF_REQ := $(WF_TEST_DIR)/requirements.txt

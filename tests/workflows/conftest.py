@@ -21,6 +21,9 @@ if _DOTENV_PATH.exists():
 
 @dataclass(frozen=True)
 class TestSettings:
+    # Prevent pytest from trying to collect this dataclass as a test container.
+    __test__ = False
+
     database_url: str | None
     wf01_push_url: str | None
     wf01_pull_url: str | None

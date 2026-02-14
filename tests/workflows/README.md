@@ -10,8 +10,8 @@ Python e2e tests for n8n workflows, executed through webhook endpoints and valid
 - `11_bot_ingest`
 - `12_bot_engine` (optional smoke test)
 - `13_bot_monitor` (optional smoke test)
-- `adapter_telegram_send` (optional smoke test)
-- `adapter_max_send` (optional smoke test)
+- `adapter_telegram_send` (optional adapter tests)
+- `adapter_max_send` (optional adapter tests)
 
 ## Important assumptions
 - `02_dispatcher` and `03_monitor` are cron workflows in production.  
@@ -32,8 +32,10 @@ cp .env.example .env
 
 Fill `.env`:
 - `DATABASE_URL` for the target DB
-- workflow webhook URLs (`WF01_*`, `WF02_*`, `WF03_*`, `WF11_*`)
+- workflow webhook URLs (`WF01_*`, `WF02_*`, `WF03_*`, `WF11_*`, `WF_ADAPTER_*`, ...)
 - optional global webhook auth header/value for n8n ingress auth
+- optional adapter vars:
+  - `ADAPTER_TG_TARGET_ID` (required for telegram adapter success + cache-upsert test)
 
 ## Run
 ```bash

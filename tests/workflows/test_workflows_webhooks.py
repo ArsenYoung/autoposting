@@ -438,7 +438,34 @@ def test_workflow_13_bot_monitor_webhook_smoke(
     _assert_webhook_ok(response, allow_conflict=True)
 
 
-def test_subworkflow_adapter_telegram_webhook_smoke(
+def _response_json(response: requests.Response) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except Exception as exc:  # pragma: no cover - defensive diagnostics
+        raise AssertionError(
+            f"Expected JSON response; status={response.status_code}; body={response.text}"
+        ) from exc
+    assert isinstance(data, dict), f"Expected JSON object, got: {type(data)}"
+    return data
+
+
+def _assert_adapter_result_shape(data: dict[str, Any]) -> None:
+    assert isinstance(data.get("ok"), bool), f"Expected boolean 'ok', got: {data.get('ok')!r}"
+    if data["ok"] is True:
+        assert isinstance(data.get("provider_message_id"), str) and data["provider_message_id"], (
+            "Expected non-empty provider_message_id on success"
+        )
+        return
+
+    err = data.get("error")
+    assert isinstance(err, dict), f"Expected error object, got: {type(err)}"
+    assert err.get("category") in {"TRANSIENT", "PERMANENT"}, f"Unexpected error.category={err.get('category')!r}"
+    assert err.get("scope") in {"platform", "channel", "delivery"}, f"Unexpected error.scope={err.get('scope')!r}"
+    assert isinstance(err.get("code"), str) and err["code"], "Expected non-empty error.code"
+    assert isinstance(err.get("message"), str) and err["message"], "Expected non-empty error.message"
+
+
+def test_subworkflow_adapter_telegram_missing_target_id(
     settings: TestSettings,
     http_session: requests.Session,
     webhook_base_headers: dict[str, str],
@@ -450,8 +477,89 @@ def test_subworkflow_adapter_telegram_webhook_smoke(
         "delivery": {
             "delivery_id": str(uuid.uuid4()),
             "channel_id": "ch_tg",
-            "rendered_text": "adapter telegram smoke",
+            "rendered_text": "adapter telegram missing target",
             "payload": {"media": []},
+            "meta": {"parse_mode": "None"},
+        },
+        "channel": {
+            "platform": "telegram",
+            "auth_ref": "autotest-auth",
+        },
+    }
+    response = post_webhook(
+        session=http_session,
+        url=url,
+        payload=payload,
+        timeout_sec=settings.request_timeout_sec,
+        global_headers=webhook_base_headers,
+    )
+    _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is False
+    assert data["error"]["code"] == "missing_target_id"
+
+
+def test_subworkflow_adapter_telegram_text_invalid_target_normalizes_error(
+    settings: TestSettings,
+    http_session: requests.Session,
+    webhook_base_headers: dict[str, str],
+    workspace_ctx: dict[str, str],
+) -> None:
+    url = require_webhook(settings.wf_adapter_telegram_url, "WF_ADAPTER_TELEGRAM_WEBHOOK_URL")
+    payload = {
+        "workspace_id": workspace_ctx["workspace_id"],
+        "delivery": {
+            "delivery_id": str(uuid.uuid4()),
+            "channel_id": "ch_tg",
+            "rendered_text": "adapter telegram text invalid target",
+            "payload": {"media": []},
+            "meta": {"parse_mode": "None"},
+        },
+        "channel": {
+            "platform": "telegram",
+            # Intentionally invalid; should exercise Telegram error normalization.
+            "target_id": "autotest-chat",
+            "auth_ref": "autotest-auth",
+        },
+    }
+    response = post_webhook(
+        session=http_session,
+        url=url,
+        payload=payload,
+        timeout_sec=settings.request_timeout_sec,
+        global_headers=webhook_base_headers,
+    )
+    _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is False
+
+
+def test_subworkflow_adapter_telegram_photo_no_blob_ref_invalid_target(
+    settings: TestSettings,
+    http_session: requests.Session,
+    webhook_base_headers: dict[str, str],
+    workspace_ctx: dict[str, str],
+) -> None:
+    url = require_webhook(settings.wf_adapter_telegram_url, "WF_ADAPTER_TELEGRAM_WEBHOOK_URL")
+    photo_url = settings.adapter_tg_photo_url or "https://httpbin.org/image/png"
+    payload = {
+        "workspace_id": workspace_ctx["workspace_id"],
+        "delivery": {
+            "delivery_id": str(uuid.uuid4()),
+            "channel_id": "ch_tg",
+            "rendered_text": "adapter telegram photo no blob_ref invalid target",
+            "payload": {
+                "media": [
+                    {
+                        "type": "photo",
+                        "origin_url": photo_url,
+                    }
+                ]
+            },
             "meta": {"parse_mode": "None"},
         },
         "channel": {
@@ -469,25 +577,38 @@ def test_subworkflow_adapter_telegram_webhook_smoke(
     )
     _assert_webhook_ok(response, allow_conflict=True)
 
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is False
 
-def test_subworkflow_adapter_max_webhook_smoke(
+
+def test_subworkflow_adapter_telegram_photo_with_blob_ref_invalid_target(
     settings: TestSettings,
     http_session: requests.Session,
     webhook_base_headers: dict[str, str],
     workspace_ctx: dict[str, str],
 ) -> None:
-    url = require_webhook(settings.wf_adapter_max_url, "WF_ADAPTER_MAX_WEBHOOK_URL")
+    url = require_webhook(settings.wf_adapter_telegram_url, "WF_ADAPTER_TELEGRAM_WEBHOOK_URL")
+    photo_url = settings.adapter_tg_photo_url or "https://httpbin.org/image/png"
     payload = {
         "workspace_id": workspace_ctx["workspace_id"],
         "delivery": {
             "delivery_id": str(uuid.uuid4()),
-            "channel_id": "ch_max",
-            "rendered_text": "adapter max smoke",
-            "payload": {"media": []},
+            "channel_id": "ch_tg",
+            "rendered_text": "adapter telegram photo blob_ref invalid target",
+            "payload": {
+                "media": [
+                    {
+                        "type": "photo",
+                        "blob_ref": f"pytest-blob-{uuid.uuid4().hex}",
+                        "origin_url": photo_url,
+                    }
+                ]
+            },
             "meta": {"parse_mode": "None"},
         },
         "channel": {
-            "platform": "max",
+            "platform": "telegram",
             "target_id": "autotest-chat",
             "auth_ref": "autotest-auth",
         },
@@ -500,3 +621,239 @@ def test_subworkflow_adapter_max_webhook_smoke(
         global_headers=webhook_base_headers,
     )
     _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is False
+
+
+def test_subworkflow_adapter_telegram_video_invalid_target_normalizes_error(
+    settings: TestSettings,
+    http_session: requests.Session,
+    webhook_base_headers: dict[str, str],
+    workspace_ctx: dict[str, str],
+) -> None:
+    url = require_webhook(settings.wf_adapter_telegram_url, "WF_ADAPTER_TELEGRAM_WEBHOOK_URL")
+    video_url = settings.adapter_tg_video_url or (settings.adapter_tg_photo_url or "https://httpbin.org/image/png")
+    payload = {
+        "workspace_id": workspace_ctx["workspace_id"],
+        "delivery": {
+            "delivery_id": str(uuid.uuid4()),
+            "channel_id": "ch_tg",
+            "rendered_text": "adapter telegram video invalid target",
+            "payload": {
+                "media": [
+                    {
+                        "type": "video",
+                        "blob_ref": f"pytest-blob-{uuid.uuid4().hex}",
+                        "origin_url": video_url,
+                    }
+                ]
+            },
+            "meta": {"parse_mode": "None"},
+        },
+        "channel": {
+            "platform": "telegram",
+            "target_id": "autotest-chat",
+            "auth_ref": "autotest-auth",
+        },
+    }
+    response = post_webhook(
+        session=http_session,
+        url=url,
+        payload=payload,
+        timeout_sec=settings.request_timeout_sec,
+        global_headers=webhook_base_headers,
+    )
+    _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is False
+
+
+def test_subworkflow_adapter_telegram_cache_upsert_on_success(
+    settings: TestSettings,
+    db_conn: psycopg.Connection[Any],
+    http_session: requests.Session,
+    webhook_base_headers: dict[str, str],
+    workspace_ctx: dict[str, str],
+) -> None:
+    url = require_webhook(settings.wf_adapter_telegram_url, "WF_ADAPTER_TELEGRAM_WEBHOOK_URL")
+    if not settings.adapter_tg_target_id:
+        pytest.skip("ADAPTER_TG_TARGET_ID is not set (required for telegram adapter success + cache upsert test)")
+
+    photo_url = settings.adapter_tg_photo_url or "https://httpbin.org/image/png"
+    blob_ref = f"pytest-blob-{uuid.uuid4().hex}"
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM public.media_blobs
+            WHERE workspace_id = %s
+              AND blob_ref = %s
+              AND provider = 'telegram'
+            """,
+            (workspace_ctx["workspace_id"], blob_ref),
+        )
+
+    payload = {
+        "workspace_id": workspace_ctx["workspace_id"],
+        "delivery": {
+            "delivery_id": str(uuid.uuid4()),
+            "channel_id": "ch_tg",
+            "rendered_text": "adapter telegram cache upsert success",
+            "payload": {
+                "media": [
+                    {
+                        "type": "photo",
+                        "blob_ref": blob_ref,
+                        "origin_url": photo_url,
+                    }
+                ]
+            },
+            "meta": {"parse_mode": "None"},
+        },
+        "channel": {
+            "platform": "telegram",
+            "target_id": settings.adapter_tg_target_id,
+            "auth_ref": "autotest-auth",
+        },
+    }
+
+    response = post_webhook(
+        session=http_session,
+        url=url,
+        payload=payload,
+        timeout_sec=settings.request_timeout_sec,
+        global_headers=webhook_base_headers,
+    )
+    _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is True, f"Expected ok=true; got: {data}"
+
+    file_id = sql_scalar(
+        db_conn,
+        """
+        SELECT mb.file_id
+        FROM public.media_blobs mb
+        WHERE mb.workspace_id = %s
+          AND mb.blob_ref = %s
+          AND mb.provider = 'telegram'
+        """,
+        (workspace_ctx["workspace_id"], blob_ref),
+    )
+    assert isinstance(file_id, str) and file_id, "expected telegram file_id cached into media_blobs"
+
+
+def test_subworkflow_adapter_max_simulate_success_missing_target_id(
+    settings: TestSettings,
+    http_session: requests.Session,
+    webhook_base_headers: dict[str, str],
+    workspace_ctx: dict[str, str],
+) -> None:
+    url = require_webhook(settings.wf_adapter_max_url, "WF_ADAPTER_MAX_WEBHOOK_URL")
+    payload = {
+        "workspace_id": workspace_ctx["workspace_id"],
+        "delivery": {
+            "delivery_id": str(uuid.uuid4()),
+            "channel_id": "ch_max",
+            "rendered_text": "adapter max simulate success",
+            "payload": {"media": []},
+            "meta": {"parse_mode": "None"},
+        },
+        "channel": {
+            "platform": "max",
+            "auth_ref": "autotest-auth",
+        },
+    }
+    response = post_webhook(
+        session=http_session,
+        url=url,
+        payload=payload,
+        timeout_sec=settings.request_timeout_sec,
+        global_headers=webhook_base_headers,
+    )
+    _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is True
+    assert data.get("raw", {}).get("simulated") is True
+
+
+def test_subworkflow_adapter_max_long_text_rejected_before_network(
+    settings: TestSettings,
+    http_session: requests.Session,
+    webhook_base_headers: dict[str, str],
+    workspace_ctx: dict[str, str],
+) -> None:
+    url = require_webhook(settings.wf_adapter_max_url, "WF_ADAPTER_MAX_WEBHOOK_URL")
+    payload = {
+        "workspace_id": workspace_ctx["workspace_id"],
+        "delivery": {
+            "delivery_id": str(uuid.uuid4()),
+            "channel_id": "ch_max",
+            "rendered_text": "x" * 5001,
+            "payload": {"media": []},
+            "meta": {"parse_mode": "None"},
+        },
+        "channel": {
+            "platform": "max",
+            "target_id": "autotest-chat",
+            # Satisfy "Can Call MAX API?" without relying on n8n env vars.
+            "auth_token": "pytest-dummy-token",
+        },
+    }
+    response = post_webhook(
+        session=http_session,
+        url=url,
+        payload=payload,
+        timeout_sec=settings.request_timeout_sec,
+        global_headers=webhook_base_headers,
+    )
+    _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is False
+    assert data["error"]["code"] == "message_too_long"
+
+
+def test_subworkflow_adapter_max_media_missing_origin_rejected(
+    settings: TestSettings,
+    http_session: requests.Session,
+    webhook_base_headers: dict[str, str],
+    workspace_ctx: dict[str, str],
+) -> None:
+    url = require_webhook(settings.wf_adapter_max_url, "WF_ADAPTER_MAX_WEBHOOK_URL")
+    payload = {
+        "workspace_id": workspace_ctx["workspace_id"],
+        "delivery": {
+            "delivery_id": str(uuid.uuid4()),
+            "channel_id": "ch_max",
+            "rendered_text": "adapter max media missing origin",
+            "payload": {"media": [{}]},
+            "meta": {"parse_mode": "None"},
+        },
+        "channel": {
+            "platform": "max",
+            "target_id": "autotest-chat",
+            "auth_token": "pytest-dummy-token",
+        },
+    }
+    response = post_webhook(
+        session=http_session,
+        url=url,
+        payload=payload,
+        timeout_sec=settings.request_timeout_sec,
+        global_headers=webhook_base_headers,
+    )
+    _assert_webhook_ok(response, allow_conflict=True)
+
+    data = _response_json(response)
+    _assert_adapter_result_shape(data)
+    assert data["ok"] is False
+    assert data["error"]["code"] == "media_missing_origin"

@@ -17,7 +17,7 @@ PYTEST_ARGS ?= -q
 help:
 	@echo "Targets:"
 	@echo "  make wf-tests            Run all n8n workflow webhook tests ($(WF_TEST_DIR))"
-	@echo "  make wf-stage1           Run stage 1 adapter smoke tests only"
+	@echo "  make wf-stage1           Run all adapter (stage 1) tests"
 	@echo "  make wf01-push           Run 01_ingest push webhook test only"
 	@echo "  make wf01-pull           Run 01_ingest pull webhook test only"
 	@echo "  make wf02-dispatcher     Run 02_dispatcher webhook test only"
@@ -25,8 +25,8 @@ help:
 	@echo "  make wf11-bot-ingest     Run 11_bot_ingest webhook test only"
 	@echo "  make wf12-bot-engine     Run 12_bot_engine smoke test only"
 	@echo "  make wf13-bot-monitor    Run 13_bot_monitor smoke test only"
-	@echo "  make wf-adapter-telegram Run adapter_telegram_send smoke test only"
-	@echo "  make wf-adapter-max      Run adapter_max_send smoke test only"
+	@echo "  make wf-adapter-telegram Run adapter_telegram_send tests only"
+	@echo "  make wf-adapter-max      Run adapter_max_send tests only"
 	@echo "  make wf-test K='expr'    Run tests matching pytest -k expression"
 	@echo
 	@echo "Notes:"
@@ -59,9 +59,7 @@ wf-test: $(WF_STAMP)
 
 .PHONY: wf-stage1
 wf-stage1: $(WF_STAMP)
-	cd "$(WF_TEST_DIR)" && "$(WF_PY)" -m pytest $(PYTEST_ARGS) \
-		test_workflows_webhooks.py::test_subworkflow_adapter_telegram_webhook_smoke \
-		test_workflows_webhooks.py::test_subworkflow_adapter_max_webhook_smoke
+	cd "$(WF_TEST_DIR)" && "$(WF_PY)" -m pytest $(PYTEST_ARGS) -k "subworkflow_adapter_"
 
 .PHONY: wf01-push
 wf01-push: $(WF_STAMP)
@@ -100,10 +98,8 @@ wf13-bot-monitor: $(WF_STAMP)
 
 .PHONY: wf-adapter-telegram
 wf-adapter-telegram: $(WF_STAMP)
-	cd "$(WF_TEST_DIR)" && "$(WF_PY)" -m pytest $(PYTEST_ARGS) \
-		test_workflows_webhooks.py::test_subworkflow_adapter_telegram_webhook_smoke
+	cd "$(WF_TEST_DIR)" && "$(WF_PY)" -m pytest $(PYTEST_ARGS) -k "subworkflow_adapter_telegram_"
 
 .PHONY: wf-adapter-max
 wf-adapter-max: $(WF_STAMP)
-	cd "$(WF_TEST_DIR)" && "$(WF_PY)" -m pytest $(PYTEST_ARGS) \
-		test_workflows_webhooks.py::test_subworkflow_adapter_max_webhook_smoke
+	cd "$(WF_TEST_DIR)" && "$(WF_PY)" -m pytest $(PYTEST_ARGS) -k "subworkflow_adapter_max_"

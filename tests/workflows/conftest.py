@@ -36,6 +36,9 @@ class TestSettings:
     wf_adapter_max_url: str | None
     webhook_auth_header: str | None
     webhook_auth_value: str | None
+    adapter_tg_target_id: str | None
+    adapter_tg_photo_url: str | None
+    adapter_tg_video_url: str | None
     ingest_secret_header: str
     bot_secret_header: str
     request_timeout_sec: float
@@ -73,6 +76,9 @@ def settings() -> TestSettings:
         wf_adapter_max_url=_env_str("WF_ADAPTER_MAX_WEBHOOK_URL"),
         webhook_auth_header=_env_str("N8N_WEBHOOK_AUTH_HEADER"),
         webhook_auth_value=_env_str("N8N_WEBHOOK_AUTH_VALUE"),
+        adapter_tg_target_id=_env_str("ADAPTER_TG_TARGET_ID"),
+        adapter_tg_photo_url=_env_str("ADAPTER_TG_PHOTO_URL"),
+        adapter_tg_video_url=_env_str("ADAPTER_TG_VIDEO_URL"),
         ingest_secret_header=_env_str("INGEST_SECRET_HEADER", "X-Autoposting-Secret") or "X-Autoposting-Secret",
         bot_secret_header=_env_str("BOT_SECRET_HEADER", "X-Autoposting-Secret") or "X-Autoposting-Secret",
         request_timeout_sec=_env_float("REQUEST_TIMEOUT_SEC", 20.0),

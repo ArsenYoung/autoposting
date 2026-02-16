@@ -487,7 +487,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first()?.json ?? {};\nconst media = Array.isArray(input.normalized_media) ? input.normalized_media : [];\nconst parseMode = input.telegram_parse_mode ?? null;\nconst caption = String(input.rendered_text_effective ?? input.rendered_text ?? '');\n\nif (media.length < 2) {\n  return [{ json: { ...input, telegram_media_group_payload: { media: [] } } }];\n}\n\nconst groupItems = [];\n\nfor (let index = 0; index < media.length; index += 1) {\n  const item = media[index] ?? {};\n  if (!item || typeof item !== 'object') continue;\n\n  const mediaValue =\n    item.file_id ??\n    item.telegram_file ??\n    item.origin_url ??\n    item.url ??\n    item.media_url ??\n    null;\n\n  if (!mediaValue) {\n    return [\n      {\n        json: {\n          ok: false,\n          error: {\n            category: 'PERMANENT',\n            scope: 'delivery',\n            code: 'media_missing_origin',\n            message: `media[${index}] missing origin_url/url/media_url or cached file_id`,\n            raw: { index, item },\n          },\n        },\n      },\n    ];\n  }\n\n  const mediaType = String(item.kind ?? item.type ?? '').toLowerCase().includes('video')\n    ? 'video'\n    : 'photo';\n\n  const entry = {\n    type: mediaType,\n    media: String(mediaValue),\n  };\n\n  const additionalFields = {};\n  if (index === 0 && caption) {\n    additionalFields.caption = caption;\n  }\n  if (index === 0 && parseMode) {\n    additionalFields.parse_mode = parseMode;\n  }\n  if (Object.keys(additionalFields).length > 0) {\n    entry.additionalFields = additionalFields;\n  }\n\n  groupItems.push(entry);\n}\n\nreturn [{\n  json: {\n    ...input,\n    telegram_media_group_payload: {\n      media: groupItems,\n    },\n  },\n}];"
+        "jsCode": "const input = $input.first()?.json ?? {};\nconst media = Array.isArray(input.normalized_media) ? input.normalized_media : [];\nconst parseMode = input.telegram_parse_mode ?? null;\nconst caption = String(input.rendered_text_effective ?? input.rendered_text ?? '');\n\nif (media.length < 2) {\n  return [{ json: { ...input, telegram_media_group_payload: { media: [] } } }];\n}\n\nconst groupItems = [];\n\nfor (let index = 0; index < media.length; index += 1) {\n  const item = media[index] ?? {};\n  if (!item || typeof item !== 'object') continue;\n\n  const mediaValue =\n    item.file_id ??\n    item.telegram_file ??\n    item.origin_url ??\n    item.url ??\n    item.media_url ??\n    null;\n\n  if (!mediaValue) {\n    return [\n      {\n        json: {\n          ok: false,\n          error: {\n            category: 'PERMANENT',\n            scope: 'delivery',\n            code: 'media_missing_origin',\n            message: `media[${index}] missing origin_url/url/media_url or cached file_id`,\n            raw: { index, item },\n          },\n        },\n      },\n    ];\n  }\n\n  const mediaType = String(item.kind ?? item.type ?? '').toLowerCase().includes('video')\n    ? 'video'\n    : 'photo';\n\n  const entry = {\n    type: mediaType,\n    media: String(mediaValue),\n  };\n\n  if (index === 0 && caption) {\n    entry.caption = caption;\n  }\n  if (index === 0 && parseMode) {\n    entry.parse_mode = parseMode;\n  }\n\n  groupItems.push(entry);\n}\n\nreturn [{\n  json: {\n    ...input,\n    telegram_media_group_payload: {\n      media: groupItems,\n    },\n  },\n}];"
       }
     },
     {
@@ -508,7 +508,8 @@
         },
         "media": "={{$json.telegram_media_group_payload}}",
         "additionalFields": {}
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "tg-if-group-build-error",

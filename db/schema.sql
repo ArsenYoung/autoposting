@@ -888,6 +888,7 @@ BEGIN
         p_workspace_id, p_source_id, v_source_ref, v_payload_hash, p_now_ts, p_now_ts + interval '3 days'
       )
       ON CONFLICT (workspace_id, source_id, source_ref)
+      WHERE source_ref IS NOT NULL
       DO NOTHING;
 
       GET DIAGNOSTICS v_inserted = ROW_COUNT;
@@ -2477,4 +2478,3 @@ ALTER TABLE ONLY public.workspace_endpoints
 --
 
 \unrestrict q1jF1u9SArUPe0uFWFPOr2iQDSmydGylyj6Wh5oX9NQT3mmOOhAv3iMyf8BTV3P
-

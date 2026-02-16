@@ -7,7 +7,7 @@
 
 ## 2. Объем (что внедряем)
 - Обязательный контур (P0):
-  - `01_ingest` (push + pull)
+  - ~~`01_ingest` (push + pull)~~
   - `02_dispatcher`
   - `03_monitor`
   - ~~`adapter_telegram_send`~~
@@ -59,24 +59,29 @@
   - ~~нормализация ошибок и обработка `attachment.not.ready` как transient~~
 - ~~Добавить webhook smoke входы для обоих адаптеров (для `WF_ADAPTER_*_WEBHOOK_URL`).~~
 
-Критерий готовности:
-- Smoke тесты адаптеров из `tests/workflows/test_workflows_webhooks.py` проходят.
+~~Критерий готовности:~~
+- ~~Smoke тесты адаптеров из `tests/workflows/test_workflows_webhooks.py` проходят.~~
 
-## Этап 2. Workflow `01_ingest` (push + pull)
-- Push path:
-  - webhook trigger + secret resolution через `workspace_endpoints`
-  - ingress guard (размер, rate, dedup через receipts)
-  - enqueue через `enqueue_messages_and_deliveries(...)`
-  - finalize `ingest_runs`
-- Pull path:
-  - cron + test webhook для тестового `items[]`
-  - pull chunk processing через `ingest_pull_chunk(...)`
-  - корректное обновление `pull_cursors` только после успешного commit
-  - finalize `ingest_runs`
-- Проверить единый deterministic normalization contract для push/pull.
+## ~~Этап 2. Workflow `01_ingest` (push + pull)~~
+- ~~Push path:~~
+  - ~~webhook trigger + secret resolution через `workspace_endpoints`~~
+  - ~~ingress guard (размер, rate, dedup через receipts)~~
+  - ~~enqueue через `enqueue_messages_and_deliveries(...)`~~
+  - ~~finalize `ingest_runs`~~
+- ~~Pull path:~~
+  - ~~cron + test webhook для тестового `items[]`~~
+  - ~~pull chunk processing через `ingest_pull_chunk(...)`~~
+  - ~~корректное обновление `pull_cursors` только после успешного commit~~
+  - ~~finalize `ingest_runs`~~
+- ~~Проверить единый deterministic normalization contract для push/pull.~~
 
-Критерий готовности:
-- Тесты `test_workflow_01_ingest_push_webhook` и `test_workflow_01_ingest_pull_webhook` проходят.
+~~Критерий готовности:~~
+- ~~Тесты `test_workflow_01_ingest_push_webhook` и `test_workflow_01_ingest_pull_webhook` проходят.~~
+
+Статус на 2026-02-16:
+- Выполнено.
+- Пройдены `make wf01-push` и `make wf01-pull`.
+- Закрыты риски: dedup bypass по `source_ref`, пустой secret hash fallback.
 
 ## Этап 3. Workflow `02_dispatcher`
 - Реализовать cron dispatcher + test webhook ветку.
@@ -128,14 +133,14 @@
 ## 5. Последовательность выполнения
 1. ~~Этап 0~~
 2. ~~Этап 1~~
-3. Этап 2
+3. ~~Этап 2~~
 4. Этап 3
 5. Этап 4
 6. Этап 6
 7. Этап 5 (можно параллелить после стабилизации P0)
 
 ## 6. Артефакты, которые должны остаться в репозитории
-- `plan.md` (этот документ)
+- `docs/plan.md` (этот документ)
 - `n8n/workflows/*.json` (экспорт workflow)
 - `n8n/env/.env.example`
 - `n8n/docs/runbook.md`

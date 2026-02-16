@@ -1,0 +1,1005 @@
+{
+  "name": "01_ingest",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf01-ingest-push",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf01-push-webhook",
+      "name": "01 Ingest Push Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2440,
+        -260
+      ],
+      "webhookId": "wf01-ingest-push"
+    },
+    {
+      "parameters": {
+        "path": "wf01-ingest-pull",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf01-pull-webhook",
+      "name": "01 Ingest Pull Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2440,
+        380
+      ],
+      "webhookId": "wf01-ingest-pull"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "wf01-pull-cron-trigger",
+      "name": "01 Ingest Pull Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -2440,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  ps.workspace_id,\n  ps.source_id\nFROM public.pull_sources ps\nJOIN public.workspace_endpoints we\n  ON we.workspace_id = ps.workspace_id\n AND we.source_id = ps.source_id\n AND we.kind = 'pull_source'\n AND we.enabled = true\nWHERE ps.enabled = true;"
+      },
+      "id": "wf01-pull-cron-list-sources",
+      "name": "Pull Cron List Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2200,
+        620
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map((item) => item?.json ?? {});\n\nreturn rows\n  .map((row) => ({\n    workspace_id: row.workspace_id ?? null,\n    source_id: row.source_id ?? null,\n  }))\n  .filter((row) => !!row.workspace_id && !!row.source_id)\n  .map((row) => ({\n    json: {\n      workspace_id: row.workspace_id,\n      source_id: row.source_id,\n      items: [],\n    },\n  }));"
+      },
+      "id": "wf01-pull-cron-build-payload",
+      "name": "Pull Cron Build Test Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1980,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\nconst headers = src.headers && typeof src.headers === 'object' ? src.headers : {};\n\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\nconst secretHeaderName = String(env.INGEST_SECRET_HEADER || 'X-Autoposting-Secret');\n\nconst getHeader = (name) => {\n  if (!name) return null;\n  const direct = headers[name];\n  if (direct !== undefined && direct !== null && String(direct).trim() !== '') return String(direct).trim();\n  const lower = headers[String(name).toLowerCase()];\n  if (lower !== undefined && lower !== null && String(lower).trim() !== '') return String(lower).trim();\n  const upper = headers[String(name).toUpperCase()];\n  if (upper !== undefined && upper !== null && String(upper).trim() !== '') return String(upper).trim();\n  return null;\n};\n\nconst ingestSecret = getHeader(secretHeaderName);\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst normalizeTags = (value) => {\n  if (!Array.isArray(value)) return [];\n  return value\n    .map((tag) => toStringOrNull(tag))\n    .filter(Boolean);\n};\n\nconst payloadObject =\n  body?.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)\n    ? body.payload\n    : {};\n\nconst renderedText = toStringOrNull(body?.rendered_text) ?? toStringOrNull(payloadObject?.text) ?? '';\n\nconst normalizedPayload = {\n  hash_version: Number.isInteger(Number(body?.hash_version)) ? Number(body.hash_version) : 1,\n  content_hash: toStringOrNull(body?.content_hash),\n  source_ref: toStringOrNull(body?.source_ref),\n  payload: payloadObject,\n  rendered_text: renderedText,\n  tags: normalizeTags(body?.tags),\n  trace_id: toStringOrNull(body?.trace_id),\n  ingest_run_id: toStringOrNull(body?.ingest_run_id),\n};\n\nif (normalizedPayload.content_hash === null) delete normalizedPayload.content_hash;\nif (normalizedPayload.source_ref === null) delete normalizedPayload.source_ref;\nif (normalizedPayload.trace_id === null) delete normalizedPayload.trace_id;\nif (normalizedPayload.ingest_run_id === null) delete normalizedPayload.ingest_run_id;\n\nconst runId =\n  toStringOrNull(body?.ingest_run_id) ??\n  'ingest-push-' + Date.now() + '-' + Math.random().toString(16).slice(2, 10);\nconst nowTs = new Date().toISOString();\n\nconst serializedBody = JSON.stringify(body ?? {});\nconst payloadBytes =\n  typeof Buffer !== 'undefined'\n    ? Buffer.byteLength(serializedBody, 'utf8')\n    : new TextEncoder().encode(serializedBody).length;\n\nreturn [{\n  json: {\n    kind: 'push',\n    run_id: runId,\n    now_ts: nowTs,\n    ingest_secret: ingestSecret,\n    normalized_payload: normalizedPayload,\n    source_ref: normalizedPayload.source_ref ?? null,\n    payload_bytes: payloadBytes,\n  },\n}];"
+      },
+      "id": "wf01-push-normalize",
+      "name": "Push Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2200,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH resolved AS (\n  SELECT\n    we.workspace_id,\n    we.endpoint_id,\n    COALESCE(we.hash_drop_window_sec, 10) AS hash_drop_window_sec,\n    we.max_payload_bytes\n  FROM public.workspace_endpoints we\n  WHERE we.kind = 'webhook_push'\n    AND we.enabled = true\n    AND NULLIF($1::text, '') IS NOT NULL\n    AND we.secret_hash = encode(digest($1::text, 'sha256'), 'hex')\n  LIMIT 1\n)\nSELECT workspace_id, endpoint_id, hash_drop_window_sec, max_payload_bytes\nFROM resolved\nUNION ALL\nSELECT NULL::uuid AS workspace_id, NULL::uuid AS endpoint_id, 10::integer AS hash_drop_window_sec, NULL::integer AS max_payload_bytes\nWHERE NOT EXISTS (SELECT 1 FROM resolved);",
+        "options": {
+          "queryReplacement": "={{$json.ingest_secret}}"
+        }
+      },
+      "id": "wf01-push-resolve-endpoint",
+      "name": "Push Resolve Endpoint",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1980,
+        -260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf01-push-endpoint-found",
+              "leftValue": "={{ !!$json.workspace_id && !!$json.endpoint_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf01-push-if-endpoint",
+      "name": "Push Endpoint Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1760,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $items('Push Normalize Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'push',\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code: 'endpoint_not_found',\n      message: 'push endpoint is not resolved by secret',\n      raw: {\n        has_secret: !!input.ingest_secret,\n      },\n    },\n  },\n}];"
+      },
+      "id": "wf01-push-endpoint-error",
+      "name": "Push Return Endpoint Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1540,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalized = $items('Push Normalize Input')[0]?.json ?? {};\nconst resolved = $input.first()?.json ?? {};\n\nreturn [{\n  json: {\n    ...normalized,\n    workspace_id: resolved.workspace_id ?? null,\n    endpoint_id: resolved.endpoint_id ?? null,\n    hash_drop_window_sec: Number(resolved.hash_drop_window_sec ?? 10),\n    max_payload_bytes: resolved.max_payload_bytes ?? null,\n  },\n}];"
+      },
+      "id": "wf01-push-build-context",
+      "name": "Push Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1540,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.ingest_runs (\n  workspace_id,\n  run_id,\n  kind,\n  endpoint_id,\n  started_at,\n  stats_json\n) VALUES (\n  $1::uuid,\n  $2::text,\n  'push',\n  $3::uuid,\n  $4::timestamptz,\n  '{}'::jsonb\n)\nON CONFLICT (workspace_id, run_id) DO NOTHING;\n\nSELECT $1::uuid AS workspace_id, $2::text AS run_id;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.run_id}}, {{$json.endpoint_id}}, {{$json.now_ts}}"
+        }
+      },
+      "id": "wf01-push-start-run",
+      "name": "Push Start Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1320,
+        -300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf01-push-payload-too-large",
+              "leftValue": "={{ Number(($items('Push Build Context')[0] && $items('Push Build Context')[0].json.max_payload_bytes) || 0) > 0 && Number(($items('Push Build Context')[0] && $items('Push Build Context')[0].json.payload_bytes) || 0) > Number(($items('Push Build Context')[0] && $items('Push Build Context')[0].json.max_payload_bytes) || 0) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf01-push-if-payload-size",
+      "name": "Push Payload Too Large?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1100,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $items('Push Build Context')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ...ctx,\n    stats_json: {\n      processed: 1,\n      accepted: 0,\n      dropped: 1,\n      payload_rejected: 1,\n      dedup_dropped: 0,\n      queued: 0,\n      deduped: 0,\n      failed_permanent: 0,\n      skipped_inflight: 0,\n    },\n    result_payload: {\n      ok: true,\n      kind: 'push',\n      run_id: ctx.run_id,\n      workspace_id: ctx.workspace_id,\n      endpoint_id: ctx.endpoint_id,\n      dropped: true,\n      reason: 'ingress_payload_rejected',\n      raw: {\n        payload_bytes: Number(ctx.payload_bytes ?? 0),\n        max_payload_bytes: Number(ctx.max_payload_bytes ?? 0),\n      },\n    },\n  },\n}];"
+      },
+      "id": "wf01-push-build-rejected-output",
+      "name": "Push Build Rejected Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inp AS (\n  SELECT\n    $1::uuid AS workspace_id,\n    $2::uuid AS endpoint_id,\n    NULLIF($3::text, '') AS source_ref,\n    $4::timestamptz AS now_ts,\n    GREATEST(1, COALESCE($5::integer, 10)) AS window_sec,\n    encode(digest(COALESCE($6::jsonb, '{}'::jsonb)::text, 'sha256'), 'hex') AS payload_hash\n),\nguard AS (\n  SELECT\n    inp.*,\n    CASE\n      WHEN EXISTS (\n        SELECT 1\n        FROM public.ingress_receipts ir\n        WHERE ir.workspace_id = inp.workspace_id\n          AND ir.endpoint_id = inp.endpoint_id\n          AND ir.payload_hash = inp.payload_hash\n          AND ir.received_at >= inp.now_ts - make_interval(secs => inp.window_sec)\n      ) THEN false\n      ELSE true\n    END AS should_insert\n  FROM inp\n),\nins AS (\n  INSERT INTO public.ingress_receipts (\n    workspace_id,\n    endpoint_id,\n    endpoint_kind,\n    source_ref,\n    payload_hash,\n    received_at,\n    expires_at\n  )\n  SELECT\n    g.workspace_id,\n    g.endpoint_id,\n    'webhook_push',\n    g.source_ref,\n    g.payload_hash,\n    g.now_ts,\n    g.now_ts + interval '3 days'\n  FROM guard g\n  WHERE g.should_insert\n  ON CONFLICT DO NOTHING\n  RETURNING 1\n)\nSELECT\n  (SELECT payload_hash FROM guard) AS payload_hash,\n  EXISTS(SELECT 1 FROM ins) AS accepted;",
+        "options": {
+          "queryReplacement": "={{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.workspace_id ? $items('Push Build Context')[0].json.workspace_id : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.endpoint_id ? $items('Push Build Context')[0].json.endpoint_id : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.source_ref ? $items('Push Build Context')[0].json.source_ref : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.now_ts ? $items('Push Build Context')[0].json.now_ts : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.hash_drop_window_sec ? $items('Push Build Context')[0].json.hash_drop_window_sec : 10}}, {{ JSON.stringify(($items('Push Build Context')[0] && $items('Push Build Context')[0].json.normalized_payload) || {}) }}"
+        }
+      },
+      "id": "wf01-push-insert-receipt",
+      "name": "Push Insert Receipt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -880,
+        -420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf01-push-receipt-accepted",
+              "leftValue": "={{ $json.accepted === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf01-push-if-receipt",
+      "name": "Push Receipt Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -660,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $items('Push Build Context')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ...ctx,\n    stats_json: {\n      processed: 1,\n      accepted: 0,\n      dropped: 1,\n      payload_rejected: 0,\n      dedup_dropped: 1,\n      queued: 0,\n      deduped: 0,\n      failed_permanent: 0,\n      skipped_inflight: 0,\n    },\n    result_payload: {\n      ok: true,\n      kind: 'push',\n      run_id: ctx.run_id,\n      workspace_id: ctx.workspace_id,\n      endpoint_id: ctx.endpoint_id,\n      dropped: true,\n      reason: 'ingress_dedup_dropped',\n    },\n  },\n}];"
+      },
+      "id": "wf01-push-build-dropped-output",
+      "name": "Push Build Dropped Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.enqueue_messages_and_deliveries(\n  $1::uuid,\n  $2::uuid,\n  'push',\n  $3::jsonb,\n  $4::timestamptz\n) AS result_json;",
+        "options": {
+          "queryReplacement": "={{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.workspace_id ? $items('Push Build Context')[0].json.workspace_id : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.endpoint_id ? $items('Push Build Context')[0].json.endpoint_id : \"\"}}, {{ JSON.stringify(($items('Push Build Context')[0] && $items('Push Build Context')[0].json.normalized_payload) || {}) }}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.now_ts ? $items('Push Build Context')[0].json.now_ts : \"\"}}"
+        }
+      },
+      "id": "wf01-push-enqueue",
+      "name": "Push Enqueue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -440,
+        -500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $items('Push Build Context')[0]?.json ?? {};\nconst row = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object') return value;\n  if (typeof value !== 'string') return null;\n  try {\n    return JSON.parse(value);\n  } catch {\n    return null;\n  }\n};\n\nconst enqueueResult = parseObject(row.result_json) ?? {};\n\nconst stats = {\n  processed: 1,\n  accepted: 1,\n  dropped: 0,\n  payload_rejected: 0,\n  dedup_dropped: 0,\n  queued: Number(enqueueResult.queued ?? 0),\n  deduped: Number(enqueueResult.deduped ?? 0),\n  failed_permanent: Number(enqueueResult.failed_permanent ?? 0),\n  skipped_inflight: Number(enqueueResult.skipped_inflight ?? 0),\n};\n\nreturn [{\n  json: {\n    ...ctx,\n    stats_json: stats,\n    result_payload: {\n      ok: true,\n      kind: 'push',\n      run_id: ctx.run_id,\n      workspace_id: ctx.workspace_id,\n      endpoint_id: ctx.endpoint_id,\n      enqueue: enqueueResult,\n    },\n  },\n}];"
+      },
+      "id": "wf01-push-build-enqueue-output",
+      "name": "Push Build Enqueue Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        -500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst normalizeTags = (value) => {\n  if (!Array.isArray(value)) return [];\n  return value\n    .map((tag) => toStringOrNull(tag))\n    .filter(Boolean);\n};\n\nconst workspaceId = toStringOrNull(body?.workspace_id);\nconst sourceId = toStringOrNull(body?.source_id);\nconst runId =\n  toStringOrNull(body?.ingest_run_id) ??\n  'ingest-pull-' + Date.now() + '-' + Math.random().toString(16).slice(2, 10);\nconst nowTs = new Date().toISOString();\n\nconst rawItems = Array.isArray(body?.items) ? body.items : [];\n\nconst normalizeItem = (itemRaw) => {\n  if (!itemRaw || typeof itemRaw !== 'object') return null;\n\n  const payloadObject =\n    itemRaw?.payload && typeof itemRaw.payload === 'object' && !Array.isArray(itemRaw.payload)\n      ? itemRaw.payload\n      : {};\n\n  const renderedText = toStringOrNull(itemRaw?.rendered_text) ?? toStringOrNull(payloadObject?.text) ?? '';\n\n  const normalizedItem = {\n    hash_version: Number.isInteger(Number(itemRaw?.hash_version)) ? Number(itemRaw.hash_version) : 1,\n    content_hash: toStringOrNull(itemRaw?.content_hash),\n    source_ref: toStringOrNull(itemRaw?.source_ref),\n    payload: payloadObject,\n    rendered_text: renderedText,\n    tags: normalizeTags(itemRaw?.tags),\n    trace_id: toStringOrNull(itemRaw?.trace_id),\n    ingest_run_id: runId,\n    source:\n      itemRaw?.source && typeof itemRaw.source === 'object' && !Array.isArray(itemRaw.source)\n        ? itemRaw.source\n        : {\n            kind: 'pull',\n            source_id: sourceId,\n          },\n    cursor_to: toStringOrNull(itemRaw?.cursor_to) ?? toStringOrNull(itemRaw?.cursor),\n  };\n\n  if (normalizedItem.content_hash === null) delete normalizedItem.content_hash;\n  if (normalizedItem.source_ref === null) delete normalizedItem.source_ref;\n  if (normalizedItem.trace_id === null) delete normalizedItem.trace_id;\n  if (normalizedItem.cursor_to === null) delete normalizedItem.cursor_to;\n\n  return normalizedItem;\n};\n\nconst normalizedItems = rawItems\n  .map((item) => normalizeItem(item))\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    kind: 'pull',\n    workspace_id: workspaceId,\n    source_id: sourceId,\n    run_id: runId,\n    now_ts: nowTs,\n    items_normalized: normalizedItems,\n    items_count: normalizedItems.length,\n  },\n}];"
+      },
+      "id": "wf01-pull-normalize",
+      "name": "Pull Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2200,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH resolved AS (\n  SELECT\n    we.workspace_id,\n    we.endpoint_id\n  FROM public.workspace_endpoints we\n  WHERE we.kind = 'pull_source'\n    AND we.enabled = true\n    AND we.workspace_id = $1::uuid\n    AND we.source_id = $2::text\n  LIMIT 1\n)\nSELECT workspace_id, endpoint_id\nFROM resolved\nUNION ALL\nSELECT NULL::uuid AS workspace_id, NULL::uuid AS endpoint_id\nWHERE NOT EXISTS (SELECT 1 FROM resolved);",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.source_id}}"
+        }
+      },
+      "id": "wf01-pull-resolve-endpoint",
+      "name": "Pull Resolve Endpoint",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1980,
+        380
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf01-pull-endpoint-found",
+              "leftValue": "={{ !!$json.workspace_id && !!$json.endpoint_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf01-pull-if-endpoint",
+      "name": "Pull Endpoint Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1760,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $items('Pull Normalize Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'pull',\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code: 'endpoint_not_found',\n      message: 'pull endpoint is not resolved by workspace_id + source_id',\n      raw: {\n        workspace_id: input.workspace_id ?? null,\n        source_id: input.source_id ?? null,\n      },\n    },\n  },\n}];"
+      },
+      "id": "wf01-pull-endpoint-error",
+      "name": "Pull Return Endpoint Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1540,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalized = $items('Pull Normalize Input')[0]?.json ?? {};\nconst resolved = $input.first()?.json ?? {};\n\nreturn [{\n  json: {\n    ...normalized,\n    workspace_id: resolved.workspace_id ?? normalized.workspace_id ?? null,\n    endpoint_id: resolved.endpoint_id ?? null,\n  },\n}];"
+      },
+      "id": "wf01-pull-build-context",
+      "name": "Pull Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1540,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.ingest_runs (\n  workspace_id,\n  run_id,\n  kind,\n  endpoint_id,\n  source_id,\n  started_at,\n  stats_json\n) VALUES (\n  $1::uuid,\n  $2::text,\n  'pull',\n  $3::uuid,\n  $4::text,\n  $5::timestamptz,\n  '{}'::jsonb\n)\nON CONFLICT (workspace_id, run_id) DO NOTHING;\n\nSELECT $1::uuid AS workspace_id, $2::text AS run_id;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.run_id}}, {{$json.endpoint_id}}, {{$json.source_id}}, {{$json.now_ts}}"
+        }
+      },
+      "id": "wf01-pull-start-run",
+      "name": "Pull Start Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1320,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf01-pull-has-items",
+              "leftValue": "={{ $items('Pull Build Context').length > 0 && Number($items('Pull Build Context')[0].json.items_count || 0) > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf01-pull-if-has-items",
+      "name": "Pull Has Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1100,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  $1::uuid AS workspace_id,\n  $2::text AS source_id,\n  $5::timestamptz AS now_ts,\n  public.ingest_pull_chunk(\n    $1::uuid,\n    $2::text,\n    $3::uuid,\n    $4::jsonb,\n    $5::timestamptz\n  ) AS result_json;",
+        "options": {
+          "queryReplacement": "={{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.workspace_id ? $items('Pull Build Context')[0].json.workspace_id : \"\"}}, {{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.source_id ? $items('Pull Build Context')[0].json.source_id : \"\"}}, {{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.endpoint_id ? $items('Pull Build Context')[0].json.endpoint_id : \"\"}}, {{ JSON.stringify(($items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.items_normalized) || []) }}, {{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.now_ts ? $items('Pull Build Context')[0].json.now_ts : \"\"}}"
+        }
+      },
+      "id": "wf01-pull-ingest-chunk",
+      "name": "Pull Ingest Chunk",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -880,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inp AS (\n  SELECT\n    $1::uuid AS workspace_id,\n    $2::text AS source_id,\n    NULLIF($3::text, '') AS cursor_to,\n    $4::timestamptz AS now_ts,\n    COALESCE($5::jsonb, '{}'::jsonb) AS result_json\n),\nupserted AS (\n  INSERT INTO public.pull_cursors (\n    workspace_id,\n    source_id,\n    cursor_json,\n    updated_at\n  )\n  SELECT\n    inp.workspace_id,\n    inp.source_id,\n    jsonb_build_object(\n      'cursor_to', inp.cursor_to,\n      'updated_at', inp.now_ts\n    ),\n    inp.now_ts\n  FROM inp\n  WHERE inp.cursor_to IS NOT NULL\n  ON CONFLICT (workspace_id, source_id)\n  DO UPDATE SET\n    cursor_json = COALESCE(public.pull_cursors.cursor_json, '{}'::jsonb) || jsonb_build_object(\n      'cursor_to', EXCLUDED.cursor_json->>'cursor_to',\n      'updated_at', EXCLUDED.updated_at\n    ),\n    updated_at = EXCLUDED.updated_at\n)\nSELECT inp.result_json\nFROM inp;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.source_id}}, {{$json.result_json && $json.result_json.cursor_to ? $json.result_json.cursor_to : \"\"}}, {{$json.now_ts}}, {{ JSON.stringify($json.result_json || {}) }}"
+        }
+      },
+      "id": "wf01-pull-upsert-cursor",
+      "name": "Pull Upsert Cursor",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -660,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $items('Pull Build Context')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ...ctx,\n    stats_json: {\n      processed: 0,\n      accepted: 0,\n      dropped: 0,\n      queued: 0,\n      deduped: 0,\n      failed_permanent: 0,\n      skipped_inflight: 0,\n    },\n    result_payload: {\n      ok: true,\n      kind: 'pull',\n      run_id: ctx.run_id,\n      workspace_id: ctx.workspace_id,\n      source_id: ctx.source_id,\n      endpoint_id: ctx.endpoint_id,\n      processed: 0,\n      accepted: 0,\n      dropped: 0,\n      cursor_to: null,\n    },\n  },\n}];"
+      },
+      "id": "wf01-pull-build-empty-output",
+      "name": "Pull Build Empty Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $items('Pull Build Context')[0]?.json ?? {};\nconst row = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object') return value;\n  if (typeof value !== 'string') return null;\n  try {\n    return JSON.parse(value);\n  } catch {\n    return null;\n  }\n};\n\nconst result = parseObject(row.result_json) ?? {};\n\nconst stats = {\n  processed: Number(result.processed ?? 0),\n  accepted: Number(result.accepted ?? 0),\n  dropped: Number(result.dropped ?? 0),\n  queued: 0,\n  deduped: 0,\n  failed_permanent: 0,\n  skipped_inflight: 0,\n};\n\nreturn [{\n  json: {\n    ...ctx,\n    stats_json: stats,\n    result_payload: {\n      ok: true,\n      kind: 'pull',\n      run_id: ctx.run_id,\n      workspace_id: ctx.workspace_id,\n      source_id: ctx.source_id,\n      endpoint_id: ctx.endpoint_id,\n      processed: stats.processed,\n      accepted: stats.accepted,\n      dropped: stats.dropped,\n      cursor_to: result.cursor_to ?? null,\n      ingest_result: result,\n    },\n  },\n}];"
+      },
+      "id": "wf01-pull-build-chunk-output",
+      "name": "Pull Build Chunk Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.ingest_runs\nSET\n  finished_at = $3::timestamptz,\n  stats_json = COALESCE(stats_json, '{}'::jsonb) || COALESCE($4::jsonb, '{}'::jsonb)\nWHERE workspace_id = $1::uuid\n  AND run_id = $2::text;\n\nSELECT $5::jsonb AS result_json;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.run_id}}, {{$json.now_ts}}, {{ JSON.stringify($json.stats_json || {}) }}, {{ JSON.stringify($json.result_payload || {}) }}"
+        }
+      },
+      "id": "wf01-finalize-run",
+      "name": "Finalize Ingest Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        -80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return null;\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;\n  } catch {\n    return null;\n  }\n};\n\nconst fromDb = parseObject(input.result_json);\nif (fromDb) {\n  return [{ json: fromDb }];\n}\n\nif (input.result_payload && typeof input.result_payload === 'object') {\n  return [{ json: input.result_payload }];\n}\n\nif (input.ok === true || input.ok === false) {\n  return [{ json: input }];\n}\n\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'ingest_output_unexpected',\n      message: '01_ingest returned unexpected payload shape',\n      raw: input,\n    },\n  },\n}];"
+      },
+      "id": "wf01-finalize-output",
+      "name": "Finalize 01_ingest Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        -80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "01 Ingest Push Webhook": {
+      "main": [
+        [
+          {
+            "node": "Push Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Push Resolve Endpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Resolve Endpoint": {
+      "main": [
+        [
+          {
+            "node": "Push Endpoint Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Endpoint Found?": {
+      "main": [
+        [
+          {
+            "node": "Push Build Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Push Return Endpoint Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Return Endpoint Error": {
+      "main": [
+        [
+          {
+            "node": "Finalize 01_ingest Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Build Context": {
+      "main": [
+        [
+          {
+            "node": "Push Start Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Start Run": {
+      "main": [
+        [
+          {
+            "node": "Push Payload Too Large?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Payload Too Large?": {
+      "main": [
+        [
+          {
+            "node": "Push Build Rejected Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Push Insert Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Build Rejected Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize Ingest Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Insert Receipt": {
+      "main": [
+        [
+          {
+            "node": "Push Receipt Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Receipt Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Push Enqueue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Push Build Dropped Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Build Dropped Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize Ingest Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Enqueue": {
+      "main": [
+        [
+          {
+            "node": "Push Build Enqueue Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Build Enqueue Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize Ingest Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Ingest Pull Webhook": {
+      "main": [
+        [
+          {
+            "node": "Pull Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Ingest Pull Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Pull Cron List Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Cron List Sources": {
+      "main": [
+        [
+          {
+            "node": "Pull Cron Build Test Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Cron Build Test Payload": {
+      "main": [
+        [
+          {
+            "node": "Pull Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Pull Resolve Endpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Resolve Endpoint": {
+      "main": [
+        [
+          {
+            "node": "Pull Endpoint Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Endpoint Found?": {
+      "main": [
+        [
+          {
+            "node": "Pull Build Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pull Return Endpoint Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Return Endpoint Error": {
+      "main": [
+        [
+          {
+            "node": "Finalize 01_ingest Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Build Context": {
+      "main": [
+        [
+          {
+            "node": "Pull Start Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Start Run": {
+      "main": [
+        [
+          {
+            "node": "Pull Has Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Has Items?": {
+      "main": [
+        [
+          {
+            "node": "Pull Ingest Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pull Build Empty Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Ingest Chunk": {
+      "main": [
+        [
+          {
+            "node": "Pull Upsert Cursor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Upsert Cursor": {
+      "main": [
+        [
+          {
+            "node": "Pull Build Chunk Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Build Chunk Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize Ingest Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull Build Empty Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize Ingest Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Ingest Run": {
+      "main": [
+        [
+          {
+            "node": "Finalize 01_ingest Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "6c55ea34-c805-4fa0-bf6d-f0df79f4440f",
+  "meta": {
+    "instanceId": "ac845f023808ccf31cb6cf4b5e79d811bd2246113c33a345a99a14afb7f8967b"
+  },
+  "id": "01_ingest_workflow",
+  "tags": []
+}

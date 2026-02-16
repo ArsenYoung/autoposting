@@ -106,7 +106,7 @@
         "operation": "executeQuery",
         "query": "WITH resolved AS (\n  SELECT\n    we.workspace_id,\n    we.endpoint_id,\n    COALESCE(we.hash_drop_window_sec, 10) AS hash_drop_window_sec,\n    we.max_payload_bytes\n  FROM public.workspace_endpoints we\n  WHERE we.kind = 'webhook_push'\n    AND we.enabled = true\n    AND NULLIF($1::text, '') IS NOT NULL\n    AND we.secret_hash = encode(digest($1::text, 'sha256'), 'hex')\n  LIMIT 1\n)\nSELECT workspace_id, endpoint_id, hash_drop_window_sec, max_payload_bytes\nFROM resolved\nUNION ALL\nSELECT NULL::uuid AS workspace_id, NULL::uuid AS endpoint_id, 10::integer AS hash_drop_window_sec, NULL::integer AS max_payload_bytes\nWHERE NOT EXISTS (SELECT 1 FROM resolved);",
         "options": {
-          "queryReplacement": "={{$json.ingest_secret}}"
+          "queryReplacement": "={{$json.ingest_secret || \"__missing_secret__\"}}"
         }
       },
       "id": "wf01-push-resolve-endpoint",
@@ -160,7 +160,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $items('Push Normalize Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'push',\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code: 'endpoint_not_found',\n      message: 'push endpoint is not resolved by secret',\n      raw: {\n        has_secret: !!input.ingest_secret,\n      },\n    },\n  },\n}];"
+        "jsCode": "const input = $items('Push Normalize Input')[0]?.json ?? {};\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\nconst secretHeaderName = String(env.INGEST_SECRET_HEADER || 'X-Autoposting-Secret');\n\nconst hasSecret = !!input.ingest_secret;\nconst code = hasSecret ? 'endpoint_auth_failed' : 'missing_endpoint_secret';\nconst message = hasSecret\n  ? 'push endpoint secret is invalid'\n  : 'push endpoint secret header is missing';\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'push',\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code,\n      message,\n      raw: {\n        reason: hasSecret ? 'invalid_secret' : 'missing_secret',\n        has_secret: hasSecret,\n        secret_header_name: secretHeaderName,\n      },\n    },\n  },\n}];"
       },
       "id": "wf01-push-endpoint-error",
       "name": "Push Return Endpoint Error",

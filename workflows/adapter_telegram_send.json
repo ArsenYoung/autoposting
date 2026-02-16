@@ -350,7 +350,8 @@
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.first()?.json ?? {};\n\nconst classifyError = (err) => {\n  const message = String(\n    typeof err === 'string'\n      ? err\n      : err?.message ?? err?.description ?? err?.error ?? 'telegram_send_failed',\n  );\n  const code = Number(\n    typeof err === 'object' && err\n      ? err.httpCode ?? err.statusCode ?? err.code ?? 0\n      : 0,\n  );\n\n  let category = 'PERMANENT';\n  let scope = 'delivery';\n  let normalizedCode = 'telegram_bad_request';\n\n  const channelUnavailablePattern =\n    /chat not found|bot was kicked|bot was blocked by the user|user is deactivated|group chat was deleted|chat_write_forbidden|have no rights to send a message|need administrator rights|bot can't initiate conversation/i;\n\n  if (code === 429 || /retry after/i.test(message)) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'rate_limited';\n  } else if (\n    code >= 500 ||\n    /timed out|timeout|network|socket|econn|etimedout|fetch failed/i.test(message)\n  ) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'upstream_unavailable';\n  } else if (/message is too long|text is too long|caption is too long/i.test(message)) {\n    category = 'PERMANENT';\n    scope = 'delivery';\n    normalizedCode = 'message_too_long';\n  } else if (\n    code === 401 ||\n    (code === 403 && channelUnavailablePattern.test(message))\n  ) {\n    category = 'PERMANENT';\n    scope = 'channel';\n    normalizedCode = 'channel_unavailable';\n  }\n\n  const retryMatch = message.match(/retry after\\s*(\\d+)/i);\n  const retryAfterMs = retryMatch ? Number(retryMatch[1]) * 1000 : null;\n\n  return {\n    category,\n    scope,\n    code: normalizedCode,\n    retry_after_ms: Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,\n    message,\n    raw: err,\n  };\n};\n\nconst itemsOrEmpty = (nodeName) => {\n  try {\n    return $items(nodeName);\n  } catch {\n    return [];\n  }\n};\n\nconst context =\n  itemsOrEmpty('Build Media Group Payload')[0]?.json ??\n  itemsOrEmpty('Apply Primary Cache')[0]?.json ??\n  itemsOrEmpty('Primary Without Cache')[0]?.json ??\n  itemsOrEmpty('Select Primary Media')[0]?.json ??\n  itemsOrEmpty('Normalize Adapter Input')[0]?.json ??\n  {};\n\nif (raw?.ok === false && raw?.error) {\n  return [{ json: { result: raw, cache: null } }];\n}\n\nif (raw?.error) {\n  return [\n    {\n      json: {\n        result: {\n          ok: false,\n          error: classifyError(raw.error),\n        },\n        cache: null,\n      },\n    },\n  ];\n}\n\nconst resultEnvelope = raw?.body?.result ?? raw?.result ?? raw;\nconst resultItems = Array.isArray(resultEnvelope) ? resultEnvelope : [resultEnvelope];\nconst firstResult =\n  resultItems.find((item) => item && typeof item === 'object') ?? {};\n\nconst providerMessageId =\n  firstResult?.message_id ??\n  firstResult?.id ??\n  raw?.message_id ??\n  `tg-${Date.now()}`;\n\nconst pickPhotoFileId = (value) => {\n  const photoArray = value?.photo ?? value?.message?.photo ?? [];\n  if (Array.isArray(photoArray) && photoArray.length > 0) {\n    return photoArray[photoArray.length - 1]?.file_id ?? null;\n  }\n  return null;\n};\n\nconst pickVideoFileId = (value) =>\n  value?.video?.file_id ?? value?.message?.video?.file_id ?? null;\n\nconst primary = context?.primary_media ?? null;\nconst primaryKind = String(primary?.kind ?? '').toLowerCase();\n\nlet fileId = null;\nif (primaryKind === 'video') {\n  fileId = pickVideoFileId(firstResult) ?? pickPhotoFileId(firstResult);\n} else {\n  fileId = pickPhotoFileId(firstResult) ?? pickVideoFileId(firstResult);\n}\n\nconst canCache = !!context?.workspace_id && !!primary?.blob_ref && !!fileId;\n\nreturn [\n  {\n    json: {\n      result: {\n        ok: true,\n        provider_message_id: String(providerMessageId),\n        delivery_id: context.delivery_id ?? null,\n        raw,\n      },\n      cache: canCache\n        ? {\n            workspace_id: context.workspace_id,\n            blob_ref: primary.blob_ref,\n            file_id: fileId,\n          }\n        : null,\n    },\n  },\n];"
+        "jsCode": "const rawInputItems = $input.all().map((item) => item?.json ?? {});\nconst raw = rawInputItems[0] ?? {};\n\nconst classifyError = (err) => {\n  const message = String(\n    typeof err === 'string'\n      ? err\n      : err?.message ?? err?.description ?? err?.error ?? 'telegram_send_failed',\n  );\n  const code = Number(\n    typeof err === 'object' && err\n      ? err.httpCode ?? err.statusCode ?? err.code ?? 0\n      : 0,\n  );\n\n  let category = 'PERMANENT';\n  let scope = 'delivery';\n  let normalizedCode = 'telegram_bad_request';\n\n  const channelUnavailablePattern =\n    /chat not found|bot was kicked|bot was blocked by the user|user is deactivated|group chat was deleted|chat_write_forbidden|have no rights to send a message|need administrator rights|bot can't initiate conversation/i;\n\n  if (code === 429 || /retry after/i.test(message)) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'rate_limited';\n  } else if (\n    code >= 500 ||\n    /timed out|timeout|network|socket|econn|etimedout|fetch failed/i.test(message)\n  ) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'upstream_unavailable';\n  } else if (/message is too long|text is too long|caption is too long/i.test(message)) {\n    category = 'PERMANENT';\n    scope = 'delivery';\n    normalizedCode = 'message_too_long';\n  } else if (code === 401 || channelUnavailablePattern.test(message)) {\n    category = 'PERMANENT';\n    scope = 'channel';\n    normalizedCode = 'channel_unavailable';\n  }\n\n  const retryMatch = message.match(/retry after\\s*(\\d+)/i);\n  const retryAfterMs = retryMatch ? Number(retryMatch[1]) * 1000 : null;\n\n  return {\n    category,\n    scope,\n    code: normalizedCode,\n    retry_after_ms: Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,\n    message,\n    raw: err,\n  };\n};\n\nconst itemsOrEmpty = (nodeName) => {\n  try {\n    return $items(nodeName);\n  } catch {\n    return [];\n  }\n};\n\nconst context =\n  itemsOrEmpty('Build Media Group Payload')[0]?.json ??\n  itemsOrEmpty('Apply Media Group Cache')[0]?.json ??\n  itemsOrEmpty('Apply Primary Cache')[0]?.json ??\n  itemsOrEmpty('Primary Without Cache')[0]?.json ??\n  itemsOrEmpty('Select Primary Media')[0]?.json ??\n  itemsOrEmpty('Normalize Adapter Input')[0]?.json ??\n  {};\n\nif (raw?.ok === false && raw?.error) {\n  return [{ json: { result: raw, cache_updates: [], cache_updates_json: '[]' } }];\n}\n\nconst executionError = rawInputItems.find((item) => item?.error);\nif (executionError?.error) {\n  return [\n    {\n      json: {\n        result: {\n          ok: false,\n          error: classifyError(executionError.error),\n        },\n        cache_updates: [],\n        cache_updates_json: '[]',\n      },\n    },\n  ];\n}\n\nconst toResultItems = (value) => {\n  const envelope = value?.body?.result ?? value?.result ?? value;\n  if (Array.isArray(envelope)) {\n    return envelope.filter((item) => item && typeof item === 'object');\n  }\n  if (envelope && typeof envelope === 'object') {\n    return [envelope];\n  }\n  return [];\n};\n\nconst resultItems = rawInputItems.flatMap(toResultItems);\nconst firstResult = resultItems[0] ?? {};\n\nconst providerMessageId =\n  firstResult?.message_id ??\n  firstResult?.id ??\n  raw?.message_id ??\n  ('tg-' + Date.now());\n\nconst pickPhotoFileId = (value) => {\n  const photoArray = value?.photo ?? value?.message?.photo ?? [];\n  if (Array.isArray(photoArray) && photoArray.length > 0) {\n    const photo = photoArray[photoArray.length - 1];\n    return photo?.file_id ? String(photo.file_id) : null;\n  }\n  return null;\n};\n\nconst pickVideoFileId = (value) => {\n  const fileId = value?.video?.file_id ?? value?.message?.video?.file_id ?? null;\n  return fileId ? String(fileId) : null;\n};\n\nconst pickFileIdByKind = (value, expectedKind) => {\n  if (!value || typeof value !== 'object') return null;\n  if (expectedKind === 'video') {\n    return pickVideoFileId(value) ?? pickPhotoFileId(value);\n  }\n  return pickPhotoFileId(value) ?? pickVideoFileId(value);\n};\n\nconst workspaceId =\n  context?.workspace_id === null || context?.workspace_id === undefined\n    ? null\n    : String(context.workspace_id);\n\nconst normalizedMedia = Array.isArray(context?.normalized_media)\n  ? context.normalized_media\n  : [];\n\nconst cacheByBlobRef = {};\nfor (let index = 0; index < normalizedMedia.length; index += 1) {\n  const mediaItemRaw = normalizedMedia[index];\n  const mediaItem = mediaItemRaw && typeof mediaItemRaw === 'object' ? mediaItemRaw : null;\n  if (!mediaItem || !workspaceId) continue;\n\n  const blobRef =\n    mediaItem.blob_ref === null || mediaItem.blob_ref === undefined\n      ? ''\n      : String(mediaItem.blob_ref).trim();\n  if (!blobRef) continue;\n\n  const expectedKind = String(mediaItem.kind ?? mediaItem.type ?? '').toLowerCase().includes('video')\n    ? 'video'\n    : 'photo';\n\n  let fileId = pickFileIdByKind(resultItems[index] ?? null, expectedKind);\n  if (!fileId) {\n    for (const item of resultItems) {\n      fileId = pickFileIdByKind(item, expectedKind);\n      if (fileId) break;\n    }\n  }\n\n  if (!fileId) continue;\n\n  cacheByBlobRef[blobRef] = {\n    workspace_id: workspaceId,\n    blob_ref: blobRef,\n    file_id: fileId,\n  };\n}\n\nconst cacheUpdates = Object.values(cacheByBlobRef);\n\nreturn [\n  {\n    json: {\n      result: {\n        ok: true,\n        provider_message_id: String(providerMessageId),\n        delivery_id: context.delivery_id ?? null,\n        raw: rawInputItems.length === 1 ? rawInputItems[0] : rawInputItems,\n      },\n      cache_updates: cacheUpdates,\n      cache_updates_json: JSON.stringify(cacheUpdates),\n    },\n  },\n];",
+        "mode": "runOnceForAllItems"
       },
       "id": "9771a694-9b1e-49de-8a94-220a25132724",
       "name": "Normalize Telegram Result",
@@ -373,7 +374,7 @@
           "conditions": [
             {
               "id": "tg-cond-has-cache",
-              "leftValue": "={{ !!$json.cache && !!$json.cache.workspace_id && !!$json.cache.blob_ref && !!$json.cache.file_id }}",
+              "leftValue": "={{ Array.isArray($json.cache_updates) && $json.cache_updates.length > 0 }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -398,9 +399,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH upserted AS (\n  INSERT INTO public.media_blobs (\n    workspace_id,\n    blob_ref,\n    provider,\n    file_id,\n    meta,\n    created_at,\n    updated_at\n  ) VALUES (\n    $1::uuid,\n    $2::text,\n    'telegram',\n    $3::text,\n    '{}'::jsonb,\n    now(),\n    now()\n  )\n  ON CONFLICT (workspace_id, blob_ref, provider)\n  DO UPDATE SET\n    file_id = EXCLUDED.file_id,\n    updated_at = now()\n  RETURNING file_id\n)\nSELECT $4::jsonb AS result_json;",
+        "query": "WITH updates AS (\n  SELECT\n    NULLIF(entry.workspace_id, '')::uuid AS workspace_id,\n    NULLIF(entry.blob_ref, '') AS blob_ref,\n    NULLIF(entry.file_id, '') AS file_id\n  FROM jsonb_to_recordset(COALESCE(NULLIF($1::text, ''), '[]')::jsonb) AS entry(\n    workspace_id text,\n    blob_ref text,\n    file_id text\n  )\n),\nupserted AS (\n  INSERT INTO public.media_blobs (\n    workspace_id,\n    blob_ref,\n    provider,\n    file_id,\n    meta,\n    created_at,\n    updated_at\n  )\n  SELECT\n    u.workspace_id,\n    u.blob_ref,\n    'telegram',\n    u.file_id,\n    '{}'::jsonb,\n    now(),\n    now()\n  FROM updates u\n  WHERE u.workspace_id IS NOT NULL\n    AND u.blob_ref IS NOT NULL\n    AND u.file_id IS NOT NULL\n  ON CONFLICT (workspace_id, blob_ref, provider)\n  DO UPDATE SET\n    file_id = EXCLUDED.file_id,\n    updated_at = now()\n)\nSELECT COALESCE($2::jsonb, '{}'::jsonb) AS result_json;",
         "options": {
-          "queryReplacement": "={{$json.cache.workspace_id}}, {{$json.cache.blob_ref}}, {{$json.cache.file_id}}, {{ JSON.stringify($json.result) }}"
+          "queryReplacement": "={{$json.cache_updates_json ?? \"[]\"}}, {{ JSON.stringify($json.result ?? {}) }}"
         }
       },
       "id": "a921c568-88a6-4f11-897f-253b6f291238",
@@ -573,6 +574,90 @@
       "position": [
         -1250,
         -144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst media = Array.isArray(input.normalized_media) ? input.normalized_media : [];\nconst blobRefs = [...new Set(\n  media\n    .map((item) => {\n      const raw = item?.blob_ref;\n      if (raw === null || raw === undefined) return '';\n      return String(raw).trim();\n    })\n    .filter(Boolean),\n)];\n\nreturn [{\n  json: {\n    ...input,\n    media_group_blob_refs: blobRefs,\n    media_group_blob_refs_json: JSON.stringify(blobRefs),\n  },\n}];"
+      },
+      "id": "0e96a4be-a1db-4f4e-a2fb-f1d1f4d5f556",
+      "name": "Prepare Media Group Cache Resolve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "tg-cond-has-media-group-blob-refs",
+              "leftValue": "={{ !!$json.workspace_id && Array.isArray($json.media_group_blob_refs) && $json.media_group_blob_refs.length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5f67be44-d77c-4ef3-a7a2-f2f0c3c53bd7",
+      "name": "Has Media Group Blob Refs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1360,
+        -528
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH refs AS (\n  SELECT jsonb_array_elements_text(COALESCE(NULLIF($2::text, ''), '[]')::jsonb) AS blob_ref\n),\nrows AS (\n  SELECT mb.blob_ref, mb.file_id\n  FROM public.media_blobs mb\n  JOIN refs r\n    ON r.blob_ref = mb.blob_ref\n  WHERE mb.workspace_id = NULLIF($1::text, '')::uuid\n    AND mb.provider = 'telegram'\n    AND COALESCE(mb.file_id, '') <> ''\n    AND (mb.expires_at IS NULL OR mb.expires_at > now())\n)\nSELECT COALESCE(jsonb_object_agg(rows.blob_ref, rows.file_id), '{}'::jsonb) AS cache_map\nFROM rows;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id ?? \"\"}}, {{$json.media_group_blob_refs_json ?? \"[]\"}}"
+        }
+      },
+      "id": "54d1ae3d-2c0e-4d39-80e7-9ee77a6530cc",
+      "name": "DB Resolve Media Group Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1136,
+        -528
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $items('Prepare Media Group Cache Resolve')[0]?.json ?? $input.first()?.json ?? {};\nconst cacheMapRaw = $input.first()?.json?.cache_map ?? {};\n\nlet cacheMap = {};\nif (cacheMapRaw && typeof cacheMapRaw === 'object' && !Array.isArray(cacheMapRaw)) {\n  cacheMap = cacheMapRaw;\n} else if (typeof cacheMapRaw === 'string') {\n  try {\n    const parsed = JSON.parse(cacheMapRaw);\n    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {\n      cacheMap = parsed;\n    }\n  } catch {}\n}\n\nconst media = Array.isArray(source.normalized_media) ? source.normalized_media : [];\nconst normalizedMedia = media.map((itemRaw) => {\n  const item = itemRaw && typeof itemRaw === 'object' ? { ...itemRaw } : itemRaw;\n  if (!item || typeof item !== 'object') return item;\n\n  const blobRef =\n    item.blob_ref === null || item.blob_ref === undefined\n      ? ''\n      : String(item.blob_ref).trim();\n\n  const cachedFileId = blobRef ? cacheMap[blobRef] ?? null : null;\n  if (cachedFileId && !item.file_id) {\n    item.file_id = String(cachedFileId);\n  }\n\n  if (item.file_id) {\n    item.telegram_file = item.file_id;\n  }\n\n  return item;\n});\n\nconst primary = normalizedMedia.length > 0 ? normalizedMedia[0] : null;\n\nreturn [{\n  json: {\n    ...source,\n    normalized_media: normalizedMedia,\n    primary_media: primary,\n  },\n}];"
+      },
+      "id": "9a05c833-96ea-4f45-a60d-2b69ea2f5f8f",
+      "name": "Apply Media Group Cache",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -928,
+        -432
       ]
     }
   ],
@@ -815,7 +900,7 @@
       "main": [
         [
           {
-            "node": "Build Media Group Payload",
+            "node": "Prepare Media Group Cache Resolve",
             "type": "main",
             "index": 0
           }
@@ -881,6 +966,57 @@
         [
           {
             "node": "Primary Without Cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Media Group Cache Resolve": {
+      "main": [
+        [
+          {
+            "node": "Has Media Group Blob Refs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Media Group Blob Refs?": {
+      "main": [
+        [
+          {
+            "node": "DB Resolve Media Group Cache",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Media Group Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Resolve Media Group Cache": {
+      "main": [
+        [
+          {
+            "node": "Apply Media Group Cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Media Group Cache": {
+      "main": [
+        [
+          {
+            "node": "Build Media Group Payload",
             "type": "main",
             "index": 0
           }

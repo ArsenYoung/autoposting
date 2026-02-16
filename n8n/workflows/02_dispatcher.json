@@ -1,0 +1,1011 @@
+{
+  "name": "02_dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf02-dispatcher",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf02-webhook-trigger",
+      "name": "02 Dispatcher Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2560,
+        160
+      ],
+      "webhookId": "wf02-dispatcher"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "wf02-cron-trigger",
+      "name": "02 Dispatcher Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -2560,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst toPositiveInt = (value, fallback) => {\n  const num = Number(value);\n  if (!Number.isFinite(num) || num <= 0) return fallback;\n  return Math.floor(num);\n};\n\nconst runId =\n  toStringOrNull(body?.run_id) ??\n  toStringOrNull(body?.test_run_id) ??\n  `dispatch-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;\n\nreturn [{\n  json: {\n    run_id: runId,\n    workspace_id: toStringOrNull(body?.workspace_id),\n    claim_limit: toPositiveInt(body?.claim_limit, 20),\n    lease_seconds: toPositiveInt(body?.lease_seconds, 300),\n    now_ts: new Date().toISOString(),\n  },\n}];"
+      },
+      "id": "wf02-normalize-input",
+      "name": "Normalize Dispatcher Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2320,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pg_try_advisory_lock(hashtext('autoposting_dispatcher_lock')) AS locked;"
+      },
+      "id": "wf02-db-acquire-lock",
+      "name": "DB Acquire Dispatcher Advisory Lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2080,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-lock-acquired",
+              "leftValue": "={{ $json.locked === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-if-lock-acquired",
+      "name": "Dispatcher Lock Acquired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1840,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run = $items('Normalize Dispatcher Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: true,\n    skipped: true,\n    reason: 'dispatcher_lock_not_acquired',\n    run_id: run.run_id ?? null,\n    workspace_id: run.workspace_id ?? null,\n  },\n}];"
+      },
+      "id": "wf02-lock-skipped",
+      "name": "Return Lock Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1600,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ensure_state AS (\n  INSERT INTO public.dispatcher_state (id, last_workspace_id, updated_at)\n  VALUES (1, NULL, now())\n  ON CONFLICT (id) DO NOTHING\n),\ncursor_state AS (\n  SELECT ds.last_workspace_id\n  FROM public.dispatcher_state ds\n  WHERE ds.id = 1\n),\nforced AS (\n  SELECT NULLIF($1::text, '')::uuid AS workspace_id\n  WHERE NULLIF($1::text, '') IS NOT NULL\n),\nauto_pick AS (\n  SELECT w.workspace_id\n  FROM public.workspaces w\n  CROSS JOIN cursor_state cs\n  WHERE w.status = 'active'\n  ORDER BY\n    CASE\n      WHEN cs.last_workspace_id IS NULL THEN 0\n      WHEN w.workspace_id > cs.last_workspace_id THEN 0\n      ELSE 1\n    END,\n    w.workspace_id\n  LIMIT 1\n),\npicked AS (\n  SELECT workspace_id, true AS is_forced\n  FROM forced\n  UNION ALL\n  SELECT workspace_id, false AS is_forced\n  FROM auto_pick\n  WHERE NOT EXISTS (SELECT 1 FROM forced)\n),\nrows AS (\n  SELECT p.workspace_id, p.is_forced, false AS is_empty\n  FROM picked p\n  UNION ALL\n  SELECT NULL::uuid AS workspace_id, false AS is_forced, true AS is_empty\n  WHERE NOT EXISTS (SELECT 1 FROM picked)\n)\nSELECT workspace_id, is_forced, is_empty\nFROM rows;",
+        "options": {
+          "queryReplacement": "={{$items('Normalize Dispatcher Input')[0]?.json?.workspace_id ?? \"\"}}"
+        }
+      },
+      "id": "wf02-db-resolve-workspace",
+      "name": "Resolve Dispatcher Workspace",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1600,
+        160
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-has-workspace",
+              "leftValue": "={{ $json.is_empty !== true && !!$json.workspace_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-if-has-workspace",
+      "name": "Has Workspace To Process?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1360,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run = $items('Normalize Dispatcher Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: true,\n    run_id: run.run_id ?? null,\n    workspace_id: run.workspace_id ?? null,\n    note: 'no_active_workspace',\n  },\n}];"
+      },
+      "id": "wf02-no-workspace",
+      "name": "No Workspace Marker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH claimed AS (\n  SELECT\n    cd.workspace_id,\n    cd.delivery_id,\n    cd.message_id,\n    cd.channel_id,\n    cd.platform::text AS platform,\n    cd.attempt,\n    cd.claim_token,\n    cd.rendered_text,\n    c.target_id,\n    c.auth_ref,\n    c.settings AS channel_settings,\n    COALESCE(d.render_meta, '{}'::jsonb) AS render_meta,\n    COALESCE(m.payload, '{}'::jsonb) AS payload,\n    m.content_hash,\n    m.source_ref\n  FROM public.claim_deliveries(\n    $1::uuid,\n    $2::text,\n    GREATEST(1, COALESCE($3::integer, 20)),\n    GREATEST(30, COALESCE($4::integer, 300)),\n    COALESCE($5::timestamptz, now())\n  ) cd\n  JOIN public.deliveries d\n    ON d.workspace_id = cd.workspace_id\n   AND d.delivery_id = cd.delivery_id\n  JOIN public.messages m\n    ON m.workspace_id = cd.workspace_id\n   AND m.message_id = cd.message_id\n  JOIN public.channels c\n    ON c.workspace_id = cd.workspace_id\n   AND c.channel_id = cd.channel_id\n),\nrows AS (\n  SELECT\n    c.workspace_id,\n    c.delivery_id,\n    c.message_id,\n    c.channel_id,\n    c.platform,\n    c.attempt,\n    c.claim_token,\n    c.rendered_text,\n    c.target_id,\n    c.auth_ref,\n    c.channel_settings,\n    c.render_meta,\n    c.payload,\n    c.content_hash,\n    c.source_ref,\n    true AS claim_has_item\n  FROM claimed c\n  UNION ALL\n  SELECT\n    $1::uuid AS workspace_id,\n    NULL::uuid AS delivery_id,\n    NULL::uuid AS message_id,\n    NULL::text AS channel_id,\n    NULL::text AS platform,\n    NULL::integer AS attempt,\n    NULL::uuid AS claim_token,\n    NULL::text AS rendered_text,\n    NULL::text AS target_id,\n    NULL::text AS auth_ref,\n    '{}'::jsonb AS channel_settings,\n    '{}'::jsonb AS render_meta,\n    '{}'::jsonb AS payload,\n    NULL::text AS content_hash,\n    NULL::text AS source_ref,\n    false AS claim_has_item\n  WHERE NOT EXISTS (SELECT 1 FROM claimed)\n)\nSELECT *\nFROM rows;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$items('Normalize Dispatcher Input')[0]?.json?.run_id ?? \"\"}}, {{$items('Normalize Dispatcher Input')[0]?.json?.claim_limit ?? 20}}, {{$items('Normalize Dispatcher Input')[0]?.json?.lease_seconds ?? 300}}, {{$items('Normalize Dispatcher Input')[0]?.json?.now_ts ?? \"\"}}"
+        }
+      },
+      "id": "wf02-db-claim-deliveries",
+      "name": "DB Claim Deliveries",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1120,
+        120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "wf02-loop-deliveries",
+      "name": "Loop Claimed Deliveries",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -880,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-has-claim",
+              "leftValue": "={{ $json.claim_has_item === true && !!$json.delivery_id && !!$json.claim_token }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-if-has-claimed-delivery",
+      "name": "Has Claimed Delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -640,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const row = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst channelSettings = parseObject(row.channel_settings);\nconst renderMeta = parseObject(row.render_meta);\nconst payload = parseObject(row.payload);\nconst platform = String(row.platform ?? '').toLowerCase();\n\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\n\nconst channel = {\n  ...channelSettings,\n  platform,\n  channel_id: row.channel_id ?? null,\n  target_id: row.target_id ?? null,\n  auth_ref: row.auth_ref ?? null,\n};\n\nif (platform === 'max') {\n  const auth = String(\n    channel.max_auth ?? channel.auth_token ?? env.MAX_AUTH_VALUE ?? '',\n  ).trim();\n  if (auth) {\n    channel.max_auth = auth;\n    channel.auth_token = auth;\n  }\n\n  const maxBaseUrl = String(\n    channel.max_base_url ?? channel.base_url ?? env.MAX_API_BASE_URL ?? '',\n  ).trim();\n  if (maxBaseUrl) {\n    channel.max_base_url = maxBaseUrl;\n  }\n}\n\nconst run = $items('Normalize Dispatcher Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    run_id: run.run_id ?? null,\n    workspace_id: row.workspace_id ?? null,\n    delivery_id: row.delivery_id ?? null,\n    claim_token: row.claim_token ?? null,\n    attempt: Number.isFinite(Number(row.attempt)) ? Number(row.attempt) : null,\n    platform,\n    channel_id: row.channel_id ?? null,\n    source_ref: row.source_ref ?? null,\n    content_hash: row.content_hash ?? null,\n    delivery: {\n      delivery_id: row.delivery_id ?? null,\n      rendered_text: String(row.rendered_text ?? ''),\n      payload,\n      meta: renderMeta,\n    },\n    channel,\n    rendered_text: String(row.rendered_text ?? ''),\n  },\n}];"
+      },
+      "id": "wf02-build-adapter-input",
+      "name": "Build Adapter Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-is-telegram",
+              "leftValue": "={{ $json.platform === 'telegram' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-if-platform-telegram",
+      "name": "Platform Is Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -160,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": "={{ $env.WF_ADAPTER_TELEGRAM_WORKFLOW_ID || 'qtz22d6Gz7x4MDxg' }}",
+        "mode": "each"
+      },
+      "id": "wf02-call-adapter-telegram",
+      "name": "Call adapter_telegram_send",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-is-max",
+              "leftValue": "={{ $json.platform === 'max' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-if-platform-max",
+      "name": "Platform Is MAX?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        80,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": "={{ $env.WF_ADAPTER_MAX_WORKFLOW_ID || 'Vmk0MqDaJDFos5sM' }}",
+        "mode": "each"
+      },
+      "id": "wf02-call-adapter-max",
+      "name": "Call adapter_max_send",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        320,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const row = $input.first()?.json ?? {};\n\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code: 'unsupported_platform',\n      message: `unsupported platform for dispatcher: ${String(row.platform ?? 'unknown')}`,\n      raw: row,\n    },\n  },\n}];"
+      },
+      "id": "wf02-unsupported-platform",
+      "name": "Unsupported Platform Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const context = $items('Build Adapter Input')[0]?.json ?? {};\nconst raw = $input.first()?.json ?? {};\n\nconst classifyExecutionError = (error) => {\n  const message = String(\n    error?.message ?? error?.description ?? error?.error ?? 'adapter_execution_failed',\n  );\n\n  return {\n    category: 'TRANSIENT',\n    scope: 'platform',\n    code: 'adapter_execution_failed',\n    message,\n    raw: error,\n  };\n};\n\nlet envelope = raw?.body ?? raw;\nif (envelope?.result_json && typeof envelope.result_json === 'object') {\n  envelope = envelope.result_json;\n}\nif (envelope?.result && typeof envelope.result === 'object' && envelope.ok === undefined) {\n  envelope = envelope.result;\n}\n\nlet adapterResult = null;\n\nif (envelope && typeof envelope === 'object' && envelope.ok === true) {\n  adapterResult = envelope;\n} else if (envelope && typeof envelope === 'object' && envelope.ok === false && envelope.error) {\n  adapterResult = envelope;\n} else if (raw?.error) {\n  adapterResult = {\n    ok: false,\n    error: classifyExecutionError(raw.error),\n  };\n}\n\nif (!adapterResult) {\n  adapterResult = {\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'adapter_result_unexpected',\n      message: 'adapter returned unexpected payload shape',\n      raw,\n    },\n  };\n}\n\nreturn [{\n  json: {\n    ...context,\n    adapter_result: adapterResult,\n  },\n}];"
+      },
+      "id": "wf02-normalize-adapter-result",
+      "name": "Normalize Adapter Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-adapter-ok",
+              "leftValue": "={{ $json.adapter_result && $json.adapter_result.ok === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-if-adapter-success",
+      "name": "Adapter Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (public.mark_sent(\n    $1::uuid,\n    $2::uuid,\n    NULLIF($3::text, ''),\n    COALESCE($4::timestamptz, now()),\n    COALESCE($5::jsonb, '{}'::jsonb),\n    $6::uuid\n  )).delivery_id AS delivery_id;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.delivery_id}}, {{$json.adapter_result?.provider_message_id ?? \"\"}}, {{$items('Normalize Dispatcher Input')[0]?.json?.now_ts ?? \"\"}}, {{ JSON.stringify($json.adapter_result?.raw ?? {}) }}, {{$json.claim_token}}"
+        }
+      },
+      "id": "wf02-db-mark-sent",
+      "name": "DB Commit Mark Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1040,
+        40
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-adapter-transient",
+              "leftValue": "={{ String($json.adapter_result?.error?.category ?? '').toUpperCase() === 'TRANSIENT' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-if-adapter-transient",
+      "name": "Adapter Error Is Transient?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1040,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (public.schedule_retry(\n    $1::uuid,\n    $2::uuid,\n    NULL::timestamptz,\n    COALESCE($3::jsonb, '{}'::jsonb),\n    $4::uuid,\n    CASE WHEN NULLIF($5::text, '') IS NULL THEN NULL ELSE ($5::integer) END\n  )).delivery_id AS delivery_id;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.delivery_id}}, {{ JSON.stringify($json.adapter_result?.error ?? {}) }}, {{$json.claim_token}}, {{$json.adapter_result?.error?.retry_after_ms ?? \"\"}}"
+        }
+      },
+      "id": "wf02-db-schedule-retry",
+      "name": "DB Commit Schedule Retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1280,
+        200
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (public.fail_permanent(\n    $1::uuid,\n    $2::uuid,\n    COALESCE($3::jsonb, '{}'::jsonb),\n    $4::uuid\n  )).delivery_id AS delivery_id;",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.delivery_id}}, {{ JSON.stringify($json.adapter_result?.error ?? {}) }}, {{$json.claim_token}}"
+        }
+      },
+      "id": "wf02-db-fail-permanent",
+      "name": "DB Commit Fail Permanent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1280,
+        340
+      ],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: { loop_continue: true } }];"
+      },
+      "id": "wf02-delivery-done",
+      "name": "Delivery Commit Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run = $items('Normalize Dispatcher Input')[0]?.json ?? {};\nconst resolved = $items('Resolve Dispatcher Workspace')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: true,\n    run_id: run.run_id ?? null,\n    workspace_id: resolved.workspace_id ?? null,\n    is_forced: resolved.is_forced === true,\n    is_empty: resolved.is_empty === true,\n  },\n}];"
+      },
+      "id": "wf02-processing-done",
+      "name": "Workspace Processing Done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ensure_state AS (\n  INSERT INTO public.dispatcher_state (id, last_workspace_id, updated_at)\n  VALUES (1, NULL, COALESCE($3::timestamptz, now()))\n  ON CONFLICT (id) DO NOTHING\n),\nupdated AS (\n  UPDATE public.dispatcher_state ds\n  SET last_workspace_id = $1::uuid,\n      updated_at = COALESCE($3::timestamptz, now())\n  WHERE ds.id = 1\n    AND $2::boolean = false\n    AND $1::uuid IS NOT NULL\n  RETURNING ds.last_workspace_id\n)\nSELECT\n  COALESCE(\n    (SELECT last_workspace_id FROM updated),\n    (SELECT ds.last_workspace_id FROM public.dispatcher_state ds WHERE ds.id = 1)\n  ) AS last_workspace_id;",
+        "options": {
+          "queryReplacement": "={{$items('Resolve Dispatcher Workspace')[0]?.json?.workspace_id ?? \"\"}}, {{$items('Resolve Dispatcher Workspace')[0]?.json?.is_forced === true}}, {{$items('Normalize Dispatcher Input')[0]?.json?.now_ts ?? \"\"}}"
+        }
+      },
+      "id": "wf02-db-update-cursor",
+      "name": "DB Update Dispatcher Cursor",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        20
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pg_advisory_unlock(hashtext('autoposting_dispatcher_lock')) AS unlocked;"
+      },
+      "id": "wf02-db-release-lock",
+      "name": "DB Release Dispatcher Advisory Lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        20
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const first = $input.first()?.json ?? {};\nif (first?.skipped === true && first?.reason === 'dispatcher_lock_not_acquired') {\n  return [{ json: first }];\n}\n\nconst safeItems = (nodeName) => {\n  try {\n    return $items(nodeName).map((item) => item?.json ?? {});\n  } catch {\n    return [];\n  }\n};\n\nconst run = safeItems('Normalize Dispatcher Input')[0] ?? {};\nconst resolved = safeItems('Resolve Dispatcher Workspace')[0] ?? {};\n\nconst claimed = safeItems('DB Claim Deliveries').filter(\n  (row) => row.claim_has_item === true && !!row.delivery_id,\n).length;\n\nreturn [{\n  json: {\n    ok: true,\n    run_id: run.run_id ?? null,\n    workspace_id: resolved.workspace_id ?? run.workspace_id ?? null,\n    claimed_deliveries: claimed,\n    sent: safeItems('DB Commit Mark Sent').length,\n    retried: safeItems('DB Commit Schedule Retry').length,\n    failed_permanent: safeItems('DB Commit Fail Permanent').length,\n    lock_released: first.unlocked ?? null,\n  },\n}];"
+      },
+      "id": "wf02-finalize-output",
+      "name": "Finalize 02_dispatcher Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        20
+      ]
+    }
+  ],
+  "connections": {
+    "02 Dispatcher Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Dispatcher Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Dispatcher Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Dispatcher Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Dispatcher Input": {
+      "main": [
+        [
+          {
+            "node": "DB Acquire Dispatcher Advisory Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Acquire Dispatcher Advisory Lock": {
+      "main": [
+        [
+          {
+            "node": "Dispatcher Lock Acquired?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatcher Lock Acquired?": {
+      "main": [
+        [
+          {
+            "node": "Resolve Dispatcher Workspace",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Lock Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Lock Skipped": {
+      "main": [
+        [
+          {
+            "node": "Finalize 02_dispatcher Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Dispatcher Workspace": {
+      "main": [
+        [
+          {
+            "node": "Has Workspace To Process?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Workspace To Process?": {
+      "main": [
+        [
+          {
+            "node": "DB Claim Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Workspace Marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Workspace Marker": {
+      "main": [
+        [
+          {
+            "node": "DB Update Dispatcher Cursor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Claim Deliveries": {
+      "main": [
+        [
+          {
+            "node": "Loop Claimed Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Claimed Deliveries": {
+      "main": [
+        [
+          {
+            "node": "Workspace Processing Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Claimed Delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Claimed Delivery?": {
+      "main": [
+        [
+          {
+            "node": "Build Adapter Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Claimed Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Adapter Input": {
+      "main": [
+        [
+          {
+            "node": "Platform Is Telegram?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Platform Is Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Call adapter_telegram_send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Platform Is MAX?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Platform Is MAX?": {
+      "main": [
+        [
+          {
+            "node": "Call adapter_max_send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsupported Platform Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call adapter_telegram_send": {
+      "main": [
+        [
+          {
+            "node": "Normalize Adapter Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call adapter_max_send": {
+      "main": [
+        [
+          {
+            "node": "Normalize Adapter Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unsupported Platform Result": {
+      "main": [
+        [
+          {
+            "node": "Normalize Adapter Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Adapter Result": {
+      "main": [
+        [
+          {
+            "node": "Adapter Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adapter Success?": {
+      "main": [
+        [
+          {
+            "node": "DB Commit Mark Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Adapter Error Is Transient?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adapter Error Is Transient?": {
+      "main": [
+        [
+          {
+            "node": "DB Commit Schedule Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB Commit Fail Permanent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Commit Mark Sent": {
+      "main": [
+        [
+          {
+            "node": "Delivery Commit Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Commit Schedule Retry": {
+      "main": [
+        [
+          {
+            "node": "Delivery Commit Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Commit Fail Permanent": {
+      "main": [
+        [
+          {
+            "node": "Delivery Commit Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delivery Commit Done": {
+      "main": [
+        [
+          {
+            "node": "Loop Claimed Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workspace Processing Done": {
+      "main": [
+        [
+          {
+            "node": "DB Update Dispatcher Cursor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Update Dispatcher Cursor": {
+      "main": [
+        [
+          {
+            "node": "DB Release Dispatcher Advisory Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Release Dispatcher Advisory Lock": {
+      "main": [
+        [
+          {
+            "node": "Finalize 02_dispatcher Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "wf02-dispatcher-v1",
+  "meta": {
+    "instanceId": "ac845f023808ccf31cb6cf4b5e79d811bd2246113c33a345a99a14afb7f8967b"
+  },
+  "id": "02_dispatcher_workflow",
+  "tags": []
+}

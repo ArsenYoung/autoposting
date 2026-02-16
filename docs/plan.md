@@ -8,7 +8,7 @@
 ## 2. Объем (что внедряем)
 - Обязательный контур (P0):
   - ~~`01_ingest` (push + pull)~~
-  - `02_dispatcher`
+  - ~~`02_dispatcher`~~
   - `03_monitor`
   - ~~`adapter_telegram_send`~~
   - ~~`adapter_max_send`~~
@@ -83,17 +83,22 @@
 - Пройдены `make wf01-push` и `make wf01-pull`.
 - Закрыты риски: dedup bypass по `source_ref`, пустой secret hash fallback.
 
-## Этап 3. Workflow `02_dispatcher`
-- Реализовать cron dispatcher + test webhook ветку.
-- Перед claim ставить advisory lock для run scope.
-- По workspace:
-  - claim через `claim_deliveries(...)`
-  - отправка через нужный адаптер по `platform`
-  - commit через `mark_sent(...)` / `schedule_retry(...)` / `fail_permanent(...)` с `claim_token`
-- Убедиться, что `attempt` не изменяется вне `claim_deliveries`.
+## ~~Этап 3. Workflow `02_dispatcher`~~
+- ~~Реализовать cron dispatcher + test webhook ветку.~~
+- ~~Перед claim ставить advisory lock для run scope.~~
+- ~~По workspace:~~
+  - ~~claim через `claim_deliveries(...)`~~
+  - ~~отправка через нужный адаптер по `platform`~~
+  - ~~commit через `mark_sent(...)` / `schedule_retry(...)` / `fail_permanent(...)` с `claim_token`~~
+- ~~Убедиться, что `attempt` не изменяется вне `claim_deliveries`.~~
 
-Критерий готовности:
-- Тест `test_workflow_02_dispatcher_webhook` проходит.
+~~Критерий готовности:~~
+- ~~Тест `test_workflow_02_dispatcher_webhook` проходит.~~
+
+Статус на 2026-02-16:
+- Выполнено.
+- Пройден `make wf02-dispatcher`.
+- Workflow задеплоен в n8n как `02_dispatcher` (active).
 
 ## Этап 4. Workflow `03_monitor`
 - Реализовать cron monitor + test webhook ветку.
@@ -134,7 +139,7 @@
 1. ~~Этап 0~~
 2. ~~Этап 1~~
 3. ~~Этап 2~~
-4. Этап 3
+4. ~~Этап 3~~
 5. Этап 4
 6. Этап 6
 7. Этап 5 (можно параллелить после стабилизации P0)

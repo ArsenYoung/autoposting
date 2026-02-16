@@ -748,7 +748,7 @@ def test_subworkflow_adapter_telegram_cache_upsert_on_success(
     assert isinstance(file_id, str) and file_id, "expected telegram file_id cached into media_blobs"
 
 
-def test_subworkflow_adapter_max_simulate_success_missing_target_id(
+def test_subworkflow_adapter_max_missing_target_rejected_without_simulate(
     settings: TestSettings,
     http_session: requests.Session,
     webhook_base_headers: dict[str, str],
@@ -767,6 +767,7 @@ def test_subworkflow_adapter_max_simulate_success_missing_target_id(
         "channel": {
             "platform": "max",
             "auth_ref": "autotest-auth",
+            "simulate": False,
         },
     }
     response = post_webhook(
@@ -780,8 +781,8 @@ def test_subworkflow_adapter_max_simulate_success_missing_target_id(
 
     data = _response_json(response)
     _assert_adapter_result_shape(data)
-    assert data["ok"] is True
-    assert data.get("raw", {}).get("simulated") is True
+    assert data["ok"] is False
+    assert data["error"]["code"] == "missing_adapter_inputs"
 
 
 def test_subworkflow_adapter_max_long_text_rejected_before_network(

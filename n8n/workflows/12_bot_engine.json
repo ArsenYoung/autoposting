@@ -1,0 +1,388 @@
+{
+  "name": "12_bot_engine",
+  "nodes": [
+    {
+      "id": "wf12-exec-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1760,
+        80
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "wf12-webhook-trigger",
+      "name": "12 Bot Engine Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1760,
+        320
+      ],
+      "parameters": {
+        "path": "wf12-bot-engine",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "wf12-bot-engine"
+    },
+    {
+      "id": "wf12-normalize-input",
+      "name": "Normalize Bot Engine Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst nowTs = new Date().toISOString();\nconst inboundProviderMessageId =\n  toStringOrNull(body.provider_message_id) ||\n  `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;\nconst traceId =\n  toStringOrNull(body.trace_id) ||\n  `bot-engine-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;\n\nreturn [{\n  json: {\n    workspace_id: toStringOrNull(body.workspace_id),\n    provider: toStringOrNull(body.provider) || 'max',\n    chat_id: toStringOrNull(body.chat_id),\n    inbound_provider_message_id: inboundProviderMessageId,\n    inbound_text: String(body.text ?? ''),\n    trace_id: traceId,\n    now_ts: nowTs,\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf12-db-load-context",
+      "name": "DB Load Bot Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1280,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH req AS (\n  SELECT\n    NULLIF($1::text, '')::uuid AS workspace_id,\n    NULLIF($2::text, '') AS chat_id,\n    COALESCE($3::text, '') AS inbound_text,\n    COALESCE($4::timestamptz, now()) AS now_ts\n),\nstate_row AS (\n  SELECT bs.state, bs.turns\n  FROM public.bot_state bs\n  JOIN req r\n    ON r.workspace_id = bs.workspace_id\n   AND r.chat_id = bs.chat_id\n  WHERE bs.expires_at IS NULL OR bs.expires_at > r.now_ts\n  LIMIT 1\n),\nmatched AS (\n  SELECT br.rule_id, br.version, br.response_template\n  FROM public.bot_rules br\n  JOIN req r\n    ON r.workspace_id = br.workspace_id\n  WHERE br.enabled = true\n    AND COALESCE(r.inbound_text, '') <> ''\n    AND EXISTS (\n      SELECT 1\n      FROM jsonb_array_elements_text(COALESCE(br.keywords, '[]'::jsonb)) kw(word)\n      WHERE lower(r.inbound_text) LIKE '%' || lower(kw.word) || '%'\n    )\n  ORDER BY br.priority ASC, br.created_at DESC\n  LIMIT 1\n)\nSELECT\n  COALESCE((SELECT state FROM state_row), 'default') AS state_before,\n  COALESCE((SELECT turns FROM state_row), 0) AS turns_before,\n  (SELECT rule_id FROM matched) AS matched_rule_id,\n  (SELECT version FROM matched) AS matched_rule_version,\n  (SELECT response_template FROM matched) AS matched_response;",
+        "options": {
+          "queryReplacement": "={{$items('Normalize Bot Engine Input')[0]?.json?.workspace_id ?? ''}}, {{$items('Normalize Bot Engine Input')[0]?.json?.chat_id ?? ''}}, {{$items('Normalize Bot Engine Input')[0]?.json?.inbound_text ?? ''}}, {{$items('Normalize Bot Engine Input')[0]?.json?.now_ts ?? ''}}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "id": "wf12-build-response",
+      "name": "Build Bot Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const base = $items('Normalize Bot Engine Input')[0]?.json ?? {};\nconst db = $input.first()?.json ?? {};\n\nconst toInt = (value, fallback = 0) => {\n  const num = Number(value);\n  return Number.isFinite(num) ? Math.floor(num) : fallback;\n};\n\nconst pickResponse = () => {\n  const matched = typeof db.matched_response === 'string' ? db.matched_response.trim() : '';\n  if (matched) return matched;\n  return 'Спасибо! Я бот-помощник. Уточните вопрос по доставке, оплате, возврату, гарантии или контактам.';\n};\n\nconst responseText = pickResponse();\nconst turnsBefore = toInt(db.turns_before, 0);\nconst turnsAfter = turnsBefore + 1;\n\nlet checksum = 7;\nfor (const ch of responseText) checksum = (checksum * 31 + ch.charCodeAt(0)) >>> 0;\nconst responseHash = `rh-${responseText.length}-${checksum.toString(16)}`;\n\nreturn [{\n  json: {\n    ...base,\n    state_before: String(db.state_before ?? 'default'),\n    turns_before: turnsBefore,\n    state_after: db.matched_rule_id ? `rule:${String(db.matched_rule_id)}` : 'fallback',\n    turns_after: turnsAfter,\n    matched_rule_id: db.matched_rule_id ?? null,\n    matched_rule_version: db.matched_rule_version === null || db.matched_rule_version === undefined ? null : Number(db.matched_rule_version),\n    response_text: responseText,\n    response_hash: responseHash,\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf12-db-upsert-outbox",
+      "name": "DB Upsert Bot Outbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -800,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO public.bot_outbox (\n    workspace_id,\n    chat_id,\n    inbound_provider_message_id,\n    response_hash,\n    meta\n  )\n  VALUES (\n    $1::uuid,\n    $2::text,\n    $3::text,\n    $4::text,\n    jsonb_strip_nulls(jsonb_build_object('trace_id', NULLIF($5::text, '')))\n  )\n  ON CONFLICT DO NOTHING\n  RETURNING 1\n)\nSELECT EXISTS (SELECT 1 FROM ins) AS should_send;",
+        "options": {
+          "queryReplacement": "={{$items('Build Bot Response')[0]?.json?.workspace_id ?? ''}}, {{$items('Build Bot Response')[0]?.json?.chat_id ?? ''}}, {{$items('Build Bot Response')[0]?.json?.inbound_provider_message_id ?? ''}}, {{$items('Build Bot Response')[0]?.json?.response_hash ?? ''}}, {{$items('Build Bot Response')[0]?.json?.trace_id ?? ''}}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "id": "wf12-if-need-send",
+      "name": "Need Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -560,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf12-cond-should-send",
+              "leftValue": "={{ $json.should_send === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf12-build-adapter-input",
+      "name": "Build Adapter Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx = $items('Build Bot Response')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    workspace_id: ctx.workspace_id ?? null,\n    chat_id: ctx.chat_id ?? null,\n    inbound_provider_message_id: ctx.inbound_provider_message_id ?? null,\n    state_before: ctx.state_before ?? 'default',\n    state_after: ctx.state_after ?? 'fallback',\n    turns_after: Number(ctx.turns_after ?? 0),\n    matched_rule_id: ctx.matched_rule_id ?? null,\n    matched_rule_version: ctx.matched_rule_version ?? null,\n    trace_id: ctx.trace_id ?? null,\n    response_text: ctx.response_text ?? '',\n    delivery: {\n      delivery_id: `bot-delivery-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,\n      channel_id: 'bot_max',\n      rendered_text: ctx.response_text ?? '',\n      payload: { media: [] },\n      meta: { parse_mode: 'None' },\n    },\n    channel: {\n      platform: 'max',\n      target_id: ctx.chat_id ?? null,\n      simulate: true,\n    },\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf12-call-adapter-max",
+      "name": "Call adapter_max_send",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -80,
+        120
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Vmk0MqDaJDFos5sM"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {}
+        },
+        "mode": "each"
+      },
+      "continueOnFail": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "wf12-normalize-adapter",
+      "name": "Normalize Adapter Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nif (input.ok === true || input.ok === false) {\n  return [{ json: input }];\n}\n\nif (input.result && typeof input.result === 'object') {\n  const nested = input.result;\n  if (nested.ok === true || nested.ok === false) {\n    return [{ json: nested }];\n  }\n}\n\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'bot_engine_adapter_output_unexpected',\n      message: 'adapter_max_send returned unexpected payload shape',\n      raw: input,\n    },\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf12-db-persist",
+      "name": "DB Persist Bot State Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        120
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upsert_state AS (\n  INSERT INTO public.bot_state (\n    workspace_id,\n    chat_id,\n    state,\n    turns,\n    updated_at,\n    context\n  )\n  VALUES (\n    $1::uuid,\n    $2::text,\n    COALESCE(NULLIF($6::text, ''), 'fallback'),\n    COALESCE(NULLIF($7::text, '')::integer, 0),\n    COALESCE(NULLIF($8::text, '')::timestamptz, now()),\n    jsonb_strip_nulls(jsonb_build_object('trace_id', NULLIF($5::text, '')))\n  )\n  ON CONFLICT (workspace_id, chat_id) DO UPDATE\n  SET state = EXCLUDED.state,\n      turns = EXCLUDED.turns,\n      updated_at = EXCLUDED.updated_at,\n      context = COALESCE(public.bot_state.context, '{}'::jsonb) || EXCLUDED.context\n),\nupdate_outbox AS (\n  UPDATE public.bot_outbox bo\n  SET provider_message_id = NULLIF($9::text, '__none__'),\n      meta = COALESCE(bo.meta, '{}'::jsonb)\n        || jsonb_strip_nulls(\n          jsonb_build_object(\n            'trace_id', NULLIF($5::text, ''),\n            'adapter_status', NULLIF($4::text, ''),\n            'adapter_error_code', NULLIF($10::text, '__none__')\n          )\n        )\n  WHERE bo.workspace_id = $1::uuid\n    AND bo.chat_id = $2::text\n    AND bo.inbound_provider_message_id = $3::text\n),\ninsert_log AS (\n  INSERT INTO public.bot_logs (\n    workspace_id,\n    chat_id,\n    inbound_provider_message_id,\n    matched_rule_id,\n    matched_rule_version,\n    action,\n    result,\n    meta\n  )\n  VALUES (\n    $1::uuid,\n    $2::text,\n    $3::text,\n    NULL,\n    NULL,\n    'bot_engine_processed',\n    CASE WHEN $4::text = 'ok' THEN 'ok'::public.event_result ELSE 'error'::public.event_result END,\n    jsonb_strip_nulls(\n      jsonb_build_object(\n        'trace_id', NULLIF($5::text, ''),\n        'state_after', NULLIF($6::text, ''),\n        'adapter_error_code', NULLIF($10::text, '__none__')\n      )\n    )\n  )\n)\nSELECT true AS persisted;",
+        "options": {
+          "queryReplacement": "={{$items(\"Build Adapter Input\")[0] && $items(\"Build Adapter Input\")[0].json.workspace_id ? $items(\"Build Adapter Input\")[0].json.workspace_id : \"\"}}, {{$items(\"Build Adapter Input\")[0] && $items(\"Build Adapter Input\")[0].json.chat_id ? $items(\"Build Adapter Input\")[0].json.chat_id : \"\"}}, {{$items(\"Build Adapter Input\")[0] && $items(\"Build Adapter Input\")[0].json.inbound_provider_message_id ? $items(\"Build Adapter Input\")[0].json.inbound_provider_message_id : \"\"}}, {{$items(\"Normalize Adapter Result\")[0] && $items(\"Normalize Adapter Result\")[0].json.ok === true ? \"ok\" : \"error\"}}, {{$items(\"Build Adapter Input\")[0] && $items(\"Build Adapter Input\")[0].json.trace_id ? $items(\"Build Adapter Input\")[0].json.trace_id : \"\"}}, {{$items(\"Build Adapter Input\")[0] && $items(\"Build Adapter Input\")[0].json.state_after ? $items(\"Build Adapter Input\")[0].json.state_after : \"fallback\"}}, {{$items(\"Build Adapter Input\")[0] && $items(\"Build Adapter Input\")[0].json.turns_after !== undefined && $items(\"Build Adapter Input\")[0].json.turns_after !== null ? $items(\"Build Adapter Input\")[0].json.turns_after : 0}}, {{$items(\"Build Bot Response\")[0] && $items(\"Build Bot Response\")[0].json.now_ts ? $items(\"Build Bot Response\")[0].json.now_ts : \"\"}}, {{$items(\"Normalize Adapter Result\")[0] && $items(\"Normalize Adapter Result\")[0].json.provider_message_id ? $items(\"Normalize Adapter Result\")[0].json.provider_message_id : \"__none__\"}}, {{$items(\"Normalize Adapter Result\")[0] && $items(\"Normalize Adapter Result\")[0].json.error && $items(\"Normalize Adapter Result\")[0].json.error.code ? $items(\"Normalize Adapter Result\")[0].json.error.code : \"__none__\"}}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "id": "wf12-build-output",
+      "name": "Build 12_bot_engine Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        120
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx = $items('Build Adapter Input')[0]?.json ?? {};\nconst adapter = $items('Normalize Adapter Result')[0]?.json ?? {};\n\nconst ok = adapter.ok === true;\nconst result = {\n  ok,\n  duplicate: false,\n  workspace_id: ctx.workspace_id ?? null,\n  chat_id: ctx.chat_id ?? null,\n  inbound_provider_message_id: ctx.inbound_provider_message_id ?? null,\n  response_text: ctx.response_text ?? '',\n  provider_message_id: ok ? String(adapter.provider_message_id ?? `max-mock-${Date.now()}`) : null,\n};\n\nif (!ok) {\n  result.error = adapter.error ?? {\n    category: 'TRANSIENT',\n    scope: 'platform',\n    code: 'bot_engine_send_failed',\n    message: 'adapter send failed',\n  };\n}\n\nreturn [{ json: result }];"
+      }
+    },
+    {
+      "id": "wf12-build-duplicate",
+      "name": "Build 12_bot_engine Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx = $items('Build Bot Response')[0]?.json ?? {};\nreturn [{\n  json: {\n    ok: true,\n    duplicate: true,\n    workspace_id: ctx.workspace_id ?? null,\n    chat_id: ctx.chat_id ?? null,\n    inbound_provider_message_id: ctx.inbound_provider_message_id ?? null,\n    response_text: ctx.response_text ?? '',\n  },\n}];"
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize Bot Engine Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "12 Bot Engine Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Bot Engine Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Bot Engine Input": {
+      "main": [
+        [
+          {
+            "node": "DB Load Bot Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Load Bot Context": {
+      "main": [
+        [
+          {
+            "node": "Build Bot Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Bot Response": {
+      "main": [
+        [
+          {
+            "node": "DB Upsert Bot Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Upsert Bot Outbox": {
+      "main": [
+        [
+          {
+            "node": "Need Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need Send?": {
+      "main": [
+        [
+          {
+            "node": "Build Adapter Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build 12_bot_engine Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Adapter Input": {
+      "main": [
+        [
+          {
+            "node": "Call adapter_max_send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call adapter_max_send": {
+      "main": [
+        [
+          {
+            "node": "Normalize Adapter Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Adapter Result": {
+      "main": [
+        [
+          {
+            "node": "DB Persist Bot State Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Persist Bot State Log": {
+      "main": [
+        [
+          {
+            "node": "Build 12_bot_engine Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "627e1b1d-557e-4d7f-8cef-cf7832fcc76b",
+  "meta": null,
+  "id": "x6SbMsgRue9eQP39",
+  "tags": []
+}

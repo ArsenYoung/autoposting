@@ -1,6 +1,5 @@
 {
   "name": "03_monitor",
-  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -42,7 +41,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst toPositiveInt = (value, fallback) => {\n  const num = Number(value);\n  if (!Number.isFinite(num) || num <= 0) return fallback;\n  return Math.floor(num);\n};\n\nconst runId =\n  toStringOrNull(body?.run_id) ??\n  toStringOrNull(body?.test_run_id) ??\n  `monitor-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;\n\nreturn [{\n  json: {\n    run_id: runId,\n    workspace_id: toStringOrNull(body?.workspace_id),\n    now_ts: new Date().toISOString(),\n    failed_permanent_threshold: toPositiveInt(\n      body?.failed_permanent_threshold ?? env.ALERT_FAILED_PERMANENT,\n      5,\n    ),\n    paused_channels_threshold: toPositiveInt(\n      body?.paused_channels_threshold ?? env.ALERT_PAUSED_CHANNELS,\n      10,\n    ),\n  },\n}];"
+        "jsCode": "const first = $input.first();\nconst src = first && first.json && typeof first.json === 'object' ? first.json : {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst env = typeof process === 'object' && process && process.env ? process.env : {};\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text !== '' ? text : null;\n};\n\nconst toPositiveInt = (value, fallback) => {\n  const num = Number(value);\n  if (!Number.isFinite(num) || num <= 0) return fallback;\n  return Math.floor(num);\n};\n\nconst toBoolean = (value, fallback) => {\n  if (value === null || value === undefined || value === '') return fallback;\n  if (typeof value === 'boolean') return value;\n  const text = String(value).trim().toLowerCase();\n  if (text === '1' || text === 'true' || text === 'yes' || text === 'y' || text === 'on') return true;\n  if (text === '0' || text === 'false' || text === 'no' || text === 'n' || text === 'off') return false;\n  return fallback;\n};\n\nconst toObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst runId =\n  toStringOrNull(body.run_id) ||\n  toStringOrNull(body.test_run_id) ||\n  `monitor-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;\n\nconst headers = toObject(body.alert_webhook_headers);\nconst envAlertHeader = toStringOrNull(env.MONITOR_ALERT_WEBHOOK_AUTH_HEADER);\nconst envAlertValue = toStringOrNull(env.MONITOR_ALERT_WEBHOOK_AUTH_VALUE);\nif (envAlertHeader && envAlertValue && headers[envAlertHeader] === undefined) {\n  headers[envAlertHeader] = envAlertValue;\n}\n\nreturn [\n  {\n    json: {\n      run_id: runId,\n      workspace_id: toStringOrNull(body.workspace_id),\n      now_ts: new Date().toISOString(),\n      failed_permanent_threshold: toPositiveInt(\n        body.failed_permanent_threshold !== undefined ? body.failed_permanent_threshold : env.ALERT_FAILED_PERMANENT,\n        5,\n      ),\n      paused_channels_threshold: toPositiveInt(\n        body.paused_channels_threshold !== undefined ? body.paused_channels_threshold : env.ALERT_PAUSED_CHANNELS,\n        10,\n      ),\n      alert_webhook_url: toStringOrNull(\n        body.alert_webhook_url !== undefined ? body.alert_webhook_url : env.MONITOR_ALERT_WEBHOOK_URL,\n      ),\n      alert_cooldown_seconds: toPositiveInt(\n        body.alert_cooldown_seconds !== undefined ? body.alert_cooldown_seconds : env.MONITOR_ALERT_COOLDOWN_SECONDS,\n        300,\n      ),\n      skip_notifications: toBoolean(body.skip_notifications, false),\n      alert_webhook_headers: headers,\n    },\n  },\n];\n"
       },
       "id": "wf03-normalize-input",
       "name": "Normalize Monitor Input",
@@ -125,7 +124,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const run = $items('Normalize Monitor Input')[0]?.json ?? {};\nconst sendingRow = $items('DB Recover Sending Leases')[0]?.json ?? {};\nconst claimedRow = $items('DB Recover Claimed Leases')[0]?.json ?? {};\nconst snapshotRow = $items('DB Build Monitor Snapshot')[0]?.json ?? {};\n\nconst toNumber = (value, fallback = 0) => {\n  const num = Number(value);\n  return Number.isFinite(num) ? num : fallback;\n};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst byStatus = parseObject(snapshotRow.by_status);\nconst deadDeliveries = toNumber(snapshotRow.dead_deliveries, toNumber(byStatus.dead, 0));\nconst failedPermanent10m = toNumber(snapshotRow.failed_permanent_10m, 0);\nconst pausedChannels = toNumber(snapshotRow.paused_channels, 0);\n\nconst failedThreshold = toNumber(run.failed_permanent_threshold, 5);\nconst pausedThreshold = toNumber(run.paused_channels_threshold, 10);\n\nconst alertReasons = [];\nif (deadDeliveries > 0) alertReasons.push('dead_deliveries');\nif (failedPermanent10m > failedThreshold) alertReasons.push('failed_permanent_threshold');\nif (pausedChannels > pausedThreshold) alertReasons.push('paused_channels_threshold');\n\nconst recoveredSending = toNumber(sendingRow.recovered_sending, 0);\nconst recoveredClaimed = toNumber(claimedRow.recovered_claimed, 0);\nif (recoveredSending > 0) alertReasons.push('sending_leases_recovered');\nif (recoveredClaimed > 0) alertReasons.push('claimed_leases_recovered');\n\nreturn [{\n  json: {\n    ok: true,\n    run_id: run.run_id ?? null,\n    workspace_id: run.workspace_id ?? null,\n    recovered_sending_leases: recoveredSending,\n    recovered_claimed_leases: recoveredClaimed,\n    snapshot: {\n      by_status: byStatus,\n      dead_deliveries: deadDeliveries,\n      failed_permanent_10m: failedPermanent10m,\n      paused_channels: pausedChannels,\n    },\n    alerts: {\n      has_alerts: alertReasons.length > 0,\n      reasons: alertReasons,\n      thresholds: {\n        failed_permanent_threshold: failedThreshold,\n        paused_channels_threshold: pausedThreshold,\n      },\n    },\n  },\n}];"
+        "jsCode": "const run = $items('Normalize Monitor Input')[0]?.json ?? {};\nconst sendingRow = $items('DB Recover Sending Leases')[0]?.json ?? {};\nconst claimedRow = $items('DB Recover Claimed Leases')[0]?.json ?? {};\nconst snapshotRow = $items('DB Build Monitor Snapshot')[0]?.json ?? {};\n\nconst toNumber = (value, fallback = 0) => {\n  const num = Number(value);\n  return Number.isFinite(num) ? num : fallback;\n};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst byStatus = parseObject(snapshotRow.by_status);\nconst deadDeliveries = toNumber(snapshotRow.dead_deliveries, toNumber(byStatus.dead, 0));\nconst failedPermanent10m = toNumber(snapshotRow.failed_permanent_10m, 0);\nconst pausedChannels = toNumber(snapshotRow.paused_channels, 0);\n\nconst failedThreshold = toNumber(run.failed_permanent_threshold, 5);\nconst pausedThreshold = toNumber(run.paused_channels_threshold, 10);\n\nconst alertReasons = [];\nif (deadDeliveries > 0) alertReasons.push('dead_deliveries');\nif (failedPermanent10m > failedThreshold) alertReasons.push('failed_permanent_threshold');\nif (pausedChannels > pausedThreshold) alertReasons.push('paused_channels_threshold');\n\nconst recoveredSending = toNumber(sendingRow.recovered_sending, 0);\nconst recoveredClaimed = toNumber(claimedRow.recovered_claimed, 0);\nif (recoveredSending > 0) alertReasons.push('sending_leases_recovered');\nif (recoveredClaimed > 0) alertReasons.push('claimed_leases_recovered');\n\nconst hasAlerts = alertReasons.length > 0;\nconst cooldownSeconds = Math.max(1, Math.floor(toNumber(run.alert_cooldown_seconds, 300)));\n\nreturn [{\n  json: {\n    ok: true,\n    run_id: run.run_id ?? null,\n    workspace_id: run.workspace_id ?? null,\n    now_ts: run.now_ts ?? new Date().toISOString(),\n    recovered_sending_leases: recoveredSending,\n    recovered_claimed_leases: recoveredClaimed,\n    snapshot: {\n      by_status: byStatus,\n      dead_deliveries: deadDeliveries,\n      failed_permanent_10m: failedPermanent10m,\n      paused_channels: pausedChannels,\n    },\n    alerts: {\n      has_alerts: hasAlerts,\n      reasons: alertReasons,\n      thresholds: {\n        failed_permanent_threshold: failedThreshold,\n        paused_channels_threshold: pausedThreshold,\n      },\n    },\n    alerting: {\n      webhook_url: run.alert_webhook_url ?? null,\n      cooldown_seconds: cooldownSeconds,\n      skip_notifications: run.skip_notifications === true,\n      webhook_headers: parseObject(run.alert_webhook_headers),\n    },\n    notification: {\n      attempted: false,\n      delivered: false,\n      skipped: true,\n      reason: hasAlerts ? 'pending_notification' : 'no_alerts',\n    },\n  },\n}];\n"
       },
       "id": "wf03-build-monitor-output",
       "name": "Build Monitor Output",
@@ -149,8 +148,233 @@
         -480,
         220
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf03-cond-has-alerts",
+              "leftValue": "={{ $json.alerts?.has_alerts === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf03-if-has-alerts",
+      "name": "Has Alerts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -500,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst rawReasons = Array.isArray(input.alerts?.reasons)\n  ? input.alerts.reasons.map((reason) => String(reason ?? '').trim()).filter(Boolean)\n  : [];\nconst sortedReasons = [...rawReasons].sort();\nconst workspaceKey = (() => {\n  const value = String(input.workspace_id ?? '').trim();\n  return value || '__all_workspaces__';\n})();\nconst alertFingerprint = `${workspaceKey}:${sortedReasons.join('|') || 'no_reasons'}`;\n\nconst webhookUrl = (() => {\n  const value = String(input.alerting?.webhook_url ?? '').trim();\n  return value || null;\n})();\nconst cooldownSeconds = Math.max(1, Math.floor(Number(input.alerting?.cooldown_seconds ?? 300) || 300));\nconst webhookHeaders = parseObject(input.alerting?.webhook_headers);\n\nconst requestBody = {\n  source: 'autoposting.03_monitor',\n  run_id: input.run_id ?? null,\n  workspace_id: input.workspace_id ?? null,\n  sent_at: input.now_ts ?? new Date().toISOString(),\n  alerts: input.alerts ?? {},\n  snapshot: input.snapshot ?? {},\n  recovered_sending_leases: Number(input.recovered_sending_leases ?? 0) || 0,\n  recovered_claimed_leases: Number(input.recovered_claimed_leases ?? 0) || 0,\n  skip_notifications: true,\n};\n\nreturn [{\n  json: {\n    ...input,\n    alerting: {\n      ...(input.alerting ?? {}),\n      webhook_url: webhookUrl,\n      webhook_headers: webhookHeaders,\n      cooldown_seconds: cooldownSeconds,\n      workspace_key: workspaceKey,\n      alert_fingerprint: alertFingerprint,\n      request_body: requestBody,\n    },\n  },\n}];\n"
+      },
+      "id": "wf03-prepare-alert-notification",
+      "name": "Prepare Monitor Alert Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf03-cond-notification-enabled",
+              "leftValue": "={{ $json.alerting?.skip_notifications !== true && !!$json.alerting?.webhook_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf03-if-notification-enabled",
+      "name": "Notification Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -20,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upsert AS (\n  INSERT INTO public.monitor_alert_receipts (\n    workspace_key,\n    alert_fingerprint,\n    first_sent_at,\n    last_sent_at,\n    sent_count\n  )\n  VALUES (\n    $1::text,\n    $2::text,\n    COALESCE($4::timestamptz, now()),\n    COALESCE($4::timestamptz, now()),\n    1\n  )\n  ON CONFLICT (workspace_key, alert_fingerprint) DO UPDATE\n  SET last_sent_at = COALESCE($4::timestamptz, now()),\n      sent_count = public.monitor_alert_receipts.sent_count + 1\n  WHERE public.monitor_alert_receipts.last_sent_at <= COALESCE($4::timestamptz, now())\n    - make_interval(secs => GREATEST(1, COALESCE($3::integer, 300)))\n  RETURNING sent_count\n)\nSELECT\n  EXISTS (SELECT 1 FROM upsert) AS should_send,\n  $1::text AS workspace_key,\n  $2::text AS alert_fingerprint,\n  GREATEST(1, COALESCE($3::integer, 300)) AS cooldown_seconds,\n  COALESCE($4::timestamptz, now()) AS now_ts,\n  $5::text AS webhook_url,\n  COALESCE($6::jsonb, '{}'::jsonb) AS webhook_headers,\n  COALESCE($7::jsonb, '{}'::jsonb) AS request_body,\n  COALESCE($8::jsonb, '{}'::jsonb) AS monitor_output;\n",
+        "options": {
+          "queryReplacement": "={{$json.alerting?.workspace_key ?? \"__all_workspaces__\"}}, {{$json.alerting?.alert_fingerprint ?? \"missing_fingerprint\"}}, {{$json.alerting?.cooldown_seconds ?? 300}}, {{$json.now_ts ?? \"\"}}, {{$json.alerting?.webhook_url ?? \"\"}}, {{ JSON.stringify($json.alerting?.webhook_headers ?? {}) }}, {{ JSON.stringify($json.alerting?.request_body ?? {}) }}, {{ JSON.stringify($json) }}"
+        }
+      },
+      "id": "wf03-db-acquire-alert-slot",
+      "name": "DB Acquire Alert Delivery Slot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        20
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf03-cond-alert-send-allowed",
+              "leftValue": "={{ $json.should_send === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf03-if-alert-send-allowed",
+      "name": "Alert Send Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const row = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nreturn [{\n  json: {\n    webhook_url: String(row.webhook_url ?? '').trim(),\n    webhook_headers: parseObject(row.webhook_headers),\n    request_body: parseObject(row.request_body),\n    monitor_output: parseObject(row.monitor_output),\n    alert_fingerprint: row.alert_fingerprint ?? null,\n    cooldown_seconds: Number(row.cooldown_seconds ?? 0) || null,\n  },\n}];\n"
+      },
+      "id": "wf03-build-alert-webhook-request",
+      "name": "Build Alert Webhook Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.webhook_url}}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.webhook_headers ?? {}) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body ?? {}) }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "wf03-http-notify-admin-webhook",
+      "name": "HTTP Notify Admin Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        940,
+        -80
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const context = $items('Build Alert Webhook Request')[0]?.json ?? {};\nconst base = (context.monitor_output && typeof context.monitor_output === 'object' && !Array.isArray(context.monitor_output))\n  ? context.monitor_output\n  : {};\nconst httpResult = $input.first()?.json ?? {};\n\nconst statusCode = Number(httpResult.statusCode);\nconst hasStatusCode = Number.isFinite(statusCode);\nconst transportError = httpResult.error ?? httpResult.__error ?? null;\nconst delivered = !transportError && hasStatusCode && statusCode >= 200 && statusCode < 300;\n\nif (delivered) {\n  return [{\n    json: {\n      ...base,\n      notification: {\n        attempted: true,\n        delivered: true,\n        skipped: false,\n        reason: null,\n        response_status: statusCode,\n        alert_fingerprint: context.alert_fingerprint ?? null,\n        cooldown_seconds: context.cooldown_seconds ?? null,\n      },\n    },\n  }];\n}\n\nreturn [{\n  json: {\n    ...base,\n    ok: false,\n    notification: {\n      attempted: true,\n      delivered: false,\n      skipped: false,\n      reason: 'delivery_failed',\n      response_status: hasStatusCode ? statusCode : null,\n      alert_fingerprint: context.alert_fingerprint ?? null,\n      cooldown_seconds: context.cooldown_seconds ?? null,\n    },\n    error: {\n      category: 'TRANSIENT',\n      scope: 'system',\n      code: 'monitor_alert_delivery_failed',\n      message: '03_monitor failed to deliver alert notification',\n      raw: transportError ?? httpResult ?? null,\n    },\n  },\n}];\n"
+      },
+      "id": "wf03-build-notification-delivery-output",
+      "name": "Build Notification Delivery Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first()?.json ?? {};\nconst reason = input.alerting?.skip_notifications === true\n  ? 'notifications_disabled'\n  : 'missing_webhook_url';\n\nreturn [{\n  json: {\n    ...input,\n    notification: {\n      attempted: false,\n      delivered: false,\n      skipped: true,\n      reason,\n      alert_fingerprint: input.alerting?.alert_fingerprint ?? null,\n    },\n  },\n}];\n"
+      },
+      "id": "wf03-build-notification-disabled-output",
+      "name": "Build Notification Disabled Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const row = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst base = parseObject(row.monitor_output);\n\nreturn [{\n  json: {\n    ...base,\n    notification: {\n      attempted: false,\n      delivered: false,\n      skipped: true,\n      reason: 'cooldown_active',\n      alert_fingerprint: row.alert_fingerprint ?? base?.alerting?.alert_fingerprint ?? null,\n      cooldown_seconds: Number(row.cooldown_seconds ?? 0) || null,\n    },\n  },\n}];\n"
+      },
+      "id": "wf03-build-notification-cooldown-output",
+      "name": "Build Notification Cooldown Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        120
+      ]
     }
   ],
+  "pinData": {},
   "connections": {
     "03 Monitor Webhook": {
       "main": [
@@ -222,6 +446,137 @@
       "main": [
         [
           {
+            "node": "Has Alerts?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Alerts?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Monitor Alert Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finalize 03_monitor Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Monitor Alert Notification": {
+      "main": [
+        [
+          {
+            "node": "Notification Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notification Enabled?": {
+      "main": [
+        [
+          {
+            "node": "DB Acquire Alert Delivery Slot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Notification Disabled Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Acquire Alert Delivery Slot": {
+      "main": [
+        [
+          {
+            "node": "Alert Send Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Send Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Build Alert Webhook Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Notification Cooldown Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert Webhook Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Notify Admin Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Notify Admin Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Notification Delivery Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification Delivery Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize 03_monitor Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification Disabled Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize 03_monitor Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification Cooldown Output": {
+      "main": [
+        [
+          {
             "node": "Finalize 03_monitor Output",
             "type": "main",
             "index": 0
@@ -230,12 +585,14 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "staticData": null,
-  "pinData": null,
-  "versionId": "wf03-monitor-v1"
+  "versionId": "ccf2bf4c-a058-4782-9da7-42af54d57602",
+  "meta": null,
+  "id": "Yof87auBLgKzZffM",
+  "tags": []
 }

@@ -41,7 +41,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst toPositiveInt = (value, fallback) => {\n  const num = Number(value);\n  if (!Number.isFinite(num) || num <= 0) return fallback;\n  return Math.floor(num);\n};\n\nconst runId =\n  toStringOrNull(body?.run_id) ??\n  toStringOrNull(body?.test_run_id) ??\n  `dispatch-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;\n\nreturn [{\n  json: {\n    run_id: runId,\n    workspace_id: toStringOrNull(body?.workspace_id),\n    claim_limit: toPositiveInt(body?.claim_limit, 20),\n    lease_seconds: toPositiveInt(body?.lease_seconds, 300),\n    now_ts: new Date().toISOString(),\n  },\n}];"
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst toPositiveInt = (value, fallback) => {\n  const num = Number(value);\n  if (!Number.isFinite(num) || num <= 0) return fallback;\n  return Math.floor(num);\n};\n\nconst runId =\n  toStringOrNull(body?.run_id) ??\n  toStringOrNull(body?.test_run_id) ??\n  `dispatch-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;\n\nconst workspaceId = toStringOrNull(body?.workspace_id) ?? '__all__';\n\nreturn [{\n  json: {\n    run_id: runId,\n    workspace_id: workspaceId,\n    claim_limit: toPositiveInt(body?.claim_limit, 20),\n    lease_seconds: toPositiveInt(body?.lease_seconds, 300),\n    now_ts: new Date().toISOString(),\n  },\n}];"
       },
       "id": "wf02-normalize-input",
       "name": "Normalize Dispatcher Input",
@@ -55,7 +55,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  t.workspace_id,\n  t.delivery_id,\n  t.message_id,\n  t.channel_id,\n  t.platform,\n  t.attempt,\n  t.claim_token,\n  t.rendered_text,\n  t.target_id,\n  t.auth_ref,\n  t.channel_settings,\n  t.render_meta,\n  t.payload,\n  t.content_hash,\n  t.source_ref,\n  t.claim_has_item,\n  t.lock_acquired,\n  t.lock_skipped,\n  t.is_forced,\n  t.is_empty\nFROM public.dispatcher_tick(\n  CASE\n    WHEN NULLIF($1::text, '') IS NULL THEN NULL::uuid\n    ELSE NULLIF($1::text, '')::uuid\n  END,\n  NULLIF($2::text, ''),\n  GREATEST(1, COALESCE($3::integer, 20)),\n  GREATEST(30, COALESCE($4::integer, 300)),\n  COALESCE($5::timestamptz, now())\n) t;",
+        "query": "SELECT\n  t.workspace_id,\n  t.delivery_id,\n  t.message_id,\n  t.channel_id,\n  t.platform,\n  t.attempt,\n  t.claim_token,\n  t.rendered_text,\n  t.target_id,\n  t.auth_ref,\n  t.channel_settings,\n  t.render_meta,\n  t.payload,\n  t.content_hash,\n  t.source_ref,\n  t.claim_has_item,\n  t.lock_acquired,\n  t.lock_skipped,\n  t.is_forced,\n  t.is_empty\nFROM public.dispatcher_tick(\n  CASE\n    WHEN NULLIF($1::text, '') IS NULL OR $1::text = '__all__' THEN NULL::uuid\n    ELSE NULLIF($1::text, '')::uuid\n  END,\n  NULLIF($2::text, ''),\n  GREATEST(1, COALESCE($3::integer, 20)),\n  GREATEST(30, COALESCE($4::integer, 300)),\n  COALESCE($5::timestamptz, now())\n) t;",
         "options": {
           "queryReplacement": "={{$items(\"Normalize Dispatcher Input\")[0]?.json?.workspace_id ?? \"\"}}, {{$items(\"Normalize Dispatcher Input\")[0]?.json?.run_id ?? \"\"}}, {{$items(\"Normalize Dispatcher Input\")[0]?.json?.claim_limit ?? 20}}, {{$items(\"Normalize Dispatcher Input\")[0]?.json?.lease_seconds ?? 300}}, {{$items(\"Normalize Dispatcher Input\")[0]?.json?.now_ts ?? \"\"}}"
         }
@@ -174,7 +174,15 @@
     {
       "parameters": {
         "source": "database",
-        "workflowId": "={{ $env.WF_ADAPTER_TELEGRAM_WORKFLOW_ID || 'qtz22d6Gz7x4MDxg' }}",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "qtz22d6Gz7x4MDxg"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {}
+        },
         "mode": "each"
       },
       "id": "wf02-call-adapter-telegram",
@@ -224,7 +232,15 @@
     {
       "parameters": {
         "source": "database",
-        "workflowId": "={{ $env.WF_ADAPTER_MAX_WORKFLOW_ID || 'Vmk0MqDaJDFos5sM' }}",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Vmk0MqDaJDFos5sM"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {}
+        },
         "mode": "each"
       },
       "id": "wf02-call-adapter-max",
@@ -407,54 +423,6 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "version": 3,
-            "leftValue": "",
-            "caseSensitive": true,
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "wf02-cond-commit-ok",
-              "leftValue": "={{ $json.commit_ok === true && !!$json.delivery_id }}",
-              "rightValue": "",
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "wf02-if-commit-applied",
-      "name": "Commit Applied?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1520,
-        240
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const row = $input.first()?.json ?? null;\nif (!row) {\n  return [];\n}\n\nconst knownAction = (value) => {\n  const action = String(value ?? '').trim();\n  return action || 'unknown';\n};\n\nconst n8nError = row.error ?? row.__error ?? null;\nconst commitAction = knownAction(row.commit_action);\n\nreturn [{\n  json: {\n    ok: false,\n    commit_error: {\n      category: 'TRANSIENT',\n      scope: 'system',\n      code: 'dispatcher_commit_failed',\n      message: `failed to commit delivery outcome (${commitAction})`,\n      commit_action: commitAction,\n      delivery_id: row.delivery_id ?? null,\n      workspace_id: row.workspace_id ?? null,\n      claim_token: row.claim_token ?? null,\n      raw: n8nError ?? row,\n    },\n  },\n}];"
-      },
-      "id": "wf02-commit-failed-marker",
-      "name": "Commit Failed Marker",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1760,
-        360
-      ]
-    },
-    {
-      "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "return [{ json: { loop_continue: true } }];"
       },
@@ -480,8 +448,57 @@
         80,
         20
       ]
+    },
+    {
+      "id": "wf02-if-commit-applied",
+      "name": "Commit Applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1520,
+        240
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf02-cond-commit-ok",
+              "leftValue": "={{ $json.commit_ok === true && !!$json.delivery_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf02-commit-failed-marker",
+      "name": "Commit Failed Marker",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const row = $input.first()?.json ?? null;\nif (!row) {\n  return [];\n}\n\nconst knownAction = (value) => {\n  const action = String(value ?? '').trim();\n  return action || 'unknown';\n};\n\nconst n8nError = row.error ?? row.__error ?? null;\nconst commitAction = knownAction(row.commit_action);\n\nreturn [{\n  json: {\n    ok: false,\n    commit_error: {\n      category: 'TRANSIENT',\n      scope: 'system',\n      code: 'dispatcher_commit_failed',\n      message: `failed to commit delivery outcome (${commitAction})`,\n      commit_action: commitAction,\n      delivery_id: row.delivery_id ?? null,\n      workspace_id: row.workspace_id ?? null,\n      claim_token: row.claim_token ?? null,\n      raw: n8nError ?? row,\n    },\n  },\n}];"
+      }
     }
   ],
+  "pinData": {},
   "connections": {
     "02 Dispatcher Webhook": {
       "main": [
@@ -505,11 +522,11 @@
         ]
       ]
     },
-    "Normalize Dispatcher Input": {
+    "DB Dispatcher Tick": {
       "main": [
         [
           {
-            "node": "DB Dispatcher Tick",
+            "node": "Loop Claimed Deliveries",
             "type": "main",
             "index": 0
           }
@@ -679,6 +696,17 @@
         ]
       ]
     },
+    "Delivery Commit Done": {
+      "main": [
+        [
+          {
+            "node": "Loop Claimed Deliveries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "DB Commit Mark Sent": {
       "main": [
         [
@@ -730,33 +758,22 @@
         ]
       ]
     },
+    "Normalize Dispatcher Input": {
+      "main": [
+        [
+          {
+            "node": "DB Dispatcher Tick",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Commit Failed Marker": {
       "main": [
         [
           {
             "node": "Finalize 02_dispatcher Output",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Delivery Commit Done": {
-      "main": [
-        [
-          {
-            "node": "Loop Claimed Deliveries",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "DB Dispatcher Tick": {
-      "main": [
-        [
-          {
-            "node": "Loop Claimed Deliveries",
             "type": "main",
             "index": 0
           }
@@ -770,10 +787,8 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "wf02-dispatcher-v1",
-  "meta": {
-    "instanceId": "ac845f023808ccf31cb6cf4b5e79d811bd2246113c33a345a99a14afb7f8967b"
-  },
-  "id": "02_dispatcher_workflow",
+  "versionId": "ce96030c-18ba-4daf-9ef4-7246cd233b09",
+  "meta": null,
+  "id": "Y0VGSlHB4VfaMkh5",
   "tags": []
 }

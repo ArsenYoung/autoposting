@@ -1,0 +1,394 @@
+{
+  "name": "11_bot_ingest",
+  "nodes": [
+    {
+      "id": "wf11-exec-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1760,
+        80
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "wf11-webhook-trigger",
+      "name": "11 Bot Ingest Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1760,
+        320
+      ],
+      "parameters": {
+        "path": "wf11-bot-ingest",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "wf11-bot-ingest"
+    },
+    {
+      "id": "wf11-normalize-input",
+      "name": "Normalize Bot Ingest Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\nconst headers = src.headers && typeof src.headers === 'object' ? src.headers : {};\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst getHeader = (name) => {\n  if (!name) return null;\n  const variants = [name, String(name).toLowerCase(), String(name).toUpperCase()];\n  for (const key of variants) {\n    const value = headers[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') {\n      return String(value).trim();\n    }\n  }\n  return null;\n};\n\nconst secretHeaderName = String(env.BOT_SECRET_HEADER || 'X-Autoposting-Secret');\nconst botSecret = getHeader(secretHeaderName);\n\nreturn [{\n  json: {\n    ingest_secret: botSecret,\n    provider: toStringOrNull(body.provider) || 'max',\n    chat_id: toStringOrNull(body.chat_id),\n    provider_message_id:\n      toStringOrNull(body.provider_message_id) ||\n      `msg-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,\n    text: String(body.text ?? ''),\n    trace_id:\n      toStringOrNull(body.trace_id) ||\n      `bot-ingest-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,\n    now_ts: new Date().toISOString(),\n    payload_json: body,\n    secret_header_name: secretHeaderName,\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf11-db-resolve-endpoint",
+      "name": "DB Resolve Bot Endpoint",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1280,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH resolved AS (\n  SELECT we.workspace_id, we.endpoint_id\n  FROM public.workspace_endpoints we\n  WHERE we.kind = 'bot_webhook'\n    AND we.enabled = true\n    AND NULLIF($1::text, '') IS NOT NULL\n    AND we.secret_hash = encode(digest($1::text, 'sha256'), 'hex')\n  LIMIT 1\n)\nSELECT workspace_id, endpoint_id\nFROM resolved\nUNION ALL\nSELECT NULL::uuid AS workspace_id, NULL::uuid AS endpoint_id\nWHERE NOT EXISTS (SELECT 1 FROM resolved);",
+        "options": {
+          "queryReplacement": "={{$items('Normalize Bot Ingest Input')[0]?.json?.ingest_secret ?? ''}}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "id": "wf11-if-endpoint-found",
+      "name": "Bot Endpoint Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1040,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf11-cond-endpoint-found",
+              "leftValue": "={{ !!$json.workspace_id && !!$json.endpoint_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf11-build-auth-error",
+      "name": "Build 11_bot_ingest Auth Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const normalized = $items('Normalize Bot Ingest Input')[0]?.json ?? {};\nconst hasSecret = !!normalized.ingest_secret;\n\nreturn [{\n  json: {\n    ok: false,\n    duplicate: false,\n    error: {\n      category: 'PERMANENT',\n      scope: 'endpoint',\n      code: hasSecret ? 'endpoint_auth_failed' : 'missing_bot_secret',\n      message: hasSecret\n        ? 'bot webhook secret is invalid'\n        : 'bot webhook secret header is missing',\n      raw: {\n        secret_header_name: normalized.secret_header_name ?? null,\n      },\n    },\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf11-build-context",
+      "name": "Build Bot Ingest Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const normalized = $items('Normalize Bot Ingest Input')[0]?.json ?? {};\nconst resolved = $input.first()?.json ?? {};\n\nreturn [{\n  json: {\n    workspace_id: resolved.workspace_id ?? null,\n    endpoint_id: resolved.endpoint_id ?? null,\n    provider: normalized.provider ?? 'max',\n    chat_id: normalized.chat_id ?? null,\n    provider_message_id: normalized.provider_message_id ?? null,\n    text: normalized.text ?? '',\n    trace_id: normalized.trace_id ?? null,\n    now_ts: normalized.now_ts ?? new Date().toISOString(),\n    payload_json: normalized.payload_json ?? {},\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf11-db-upsert-inbox",
+      "name": "DB Upsert Bot Inbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -560,
+        80
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH ins AS (\n  INSERT INTO public.bot_inbox (\n    workspace_id,\n    provider,\n    chat_id,\n    provider_message_id,\n    ts,\n    payload\n  )\n  VALUES (\n    $1::uuid,\n    $2::text,\n    $3::text,\n    $4::text,\n    COALESCE($5::timestamptz, now()),\n    COALESCE($6::jsonb, '{}'::jsonb)\n  )\n  ON CONFLICT DO NOTHING\n  RETURNING 1\n)\nSELECT EXISTS (SELECT 1 FROM ins) AS inserted;",
+        "options": {
+          "queryReplacement": "={{$items('Build Bot Ingest Context')[0]?.json?.workspace_id ?? ''}}, {{$items('Build Bot Ingest Context')[0]?.json?.provider ?? 'max'}}, {{$items('Build Bot Ingest Context')[0]?.json?.chat_id ?? ''}}, {{$items('Build Bot Ingest Context')[0]?.json?.provider_message_id ?? ''}}, {{$items('Build Bot Ingest Context')[0]?.json?.now_ts ?? ''}}, {{ JSON.stringify($items('Build Bot Ingest Context')[0]?.json?.payload_json ?? {}) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "id": "wf11-if-inserted",
+      "name": "Is New Inbound?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -320,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "wf11-cond-inserted",
+              "leftValue": "={{ $json.inserted === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "wf11-build-engine-payload",
+      "name": "Build Engine Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx = $items('Build Bot Ingest Context')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    workspace_id: ctx.workspace_id ?? null,\n    provider: ctx.provider ?? 'max',\n    chat_id: ctx.chat_id ?? null,\n    provider_message_id: ctx.provider_message_id ?? null,\n    text: ctx.text ?? '',\n    trace_id: ctx.trace_id ?? null,\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf11-call-engine",
+      "name": "Call 12_bot_engine",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        160,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "x6SbMsgRue9eQP39"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {}
+        },
+        "mode": "each"
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "wf11-normalize-engine",
+      "name": "Normalize 11_bot_ingest Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first()?.json ?? {};\nif (input.ok === true || input.ok === false) {\n  return [{ json: { ...input, duplicate: false } }];\n}\n\nreturn [{\n  json: {\n    ok: true,\n    duplicate: false,\n    accepted: true,\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf11-build-duplicate",
+      "name": "Build 11_bot_ingest Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx = $items('Build Bot Ingest Context')[0]?.json ?? {};\nreturn [{\n  json: {\n    ok: true,\n    duplicate: true,\n    workspace_id: ctx.workspace_id ?? null,\n    chat_id: ctx.chat_id ?? null,\n    provider_message_id: ctx.provider_message_id ?? null,\n  },\n}];"
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalize Bot Ingest Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "11 Bot Ingest Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Bot Ingest Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Bot Ingest Input": {
+      "main": [
+        [
+          {
+            "node": "DB Resolve Bot Endpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Resolve Bot Endpoint": {
+      "main": [
+        [
+          {
+            "node": "Bot Endpoint Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bot Endpoint Found?": {
+      "main": [
+        [
+          {
+            "node": "Build Bot Ingest Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build 11_bot_ingest Auth Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Bot Ingest Context": {
+      "main": [
+        [
+          {
+            "node": "DB Upsert Bot Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Upsert Bot Inbox": {
+      "main": [
+        [
+          {
+            "node": "Is New Inbound?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Inbound?": {
+      "main": [
+        [
+          {
+            "node": "Build Engine Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build 11_bot_ingest Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Engine Payload": {
+      "main": [
+        [
+          {
+            "node": "Call 12_bot_engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 12_bot_engine": {
+      "main": [
+        [
+          {
+            "node": "Normalize 11_bot_ingest Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "9f74ef26-95c4-4bdd-8444-25298b94eb23",
+  "meta": null,
+  "id": "wfPSzX6YlQFfyPXj",
+  "tags": []
+}

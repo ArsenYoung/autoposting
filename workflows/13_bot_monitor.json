@@ -1,0 +1,150 @@
+{
+  "name": "13_bot_monitor",
+  "nodes": [
+    {
+      "id": "wf13-webhook-trigger",
+      "name": "13 Bot Monitor Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1040,
+        120
+      ],
+      "parameters": {
+        "path": "wf13-bot-monitor",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "wf13-bot-monitor"
+    },
+    {
+      "id": "wf13-cron-trigger",
+      "name": "13 Bot Monitor Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1040,
+        320
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wf13-normalize-input",
+      "name": "Normalize Bot Monitor Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst toPositiveInt = (value, fallback) => {\n  const num = Number(value);\n  if (!Number.isFinite(num) || num <= 0) return fallback;\n  return Math.floor(num);\n};\n\nreturn [{\n  json: {\n    run_id: toStringOrNull(body.run_id) || toStringOrNull(body.test_run_id) || `bot-monitor-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,\n    workspace_id: toStringOrNull(body.workspace_id),\n    now_ts: new Date().toISOString(),\n    window_minutes: toPositiveInt(body.window_minutes, 15),\n    error_threshold: toPositiveInt(body.error_threshold, 10),\n    fallback_rate_threshold_pct: toPositiveInt(body.fallback_rate_threshold_pct, 50),\n  },\n}];"
+      }
+    },
+    {
+      "id": "wf13-db-snapshot",
+      "name": "DB Bot Monitor Snapshot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -560,
+        220
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH req AS (\n  SELECT\n    NULLIF($1::text, '')::uuid AS workspace_id,\n    GREATEST(1, COALESCE($2::integer, 15)) AS window_minutes,\n    COALESCE($3::timestamptz, now()) AS now_ts\n),\nlogs AS (\n  SELECT bl.*\n  FROM public.bot_logs bl\n  CROSS JOIN req r\n  WHERE bl.created_at >= r.now_ts - make_interval(mins => r.window_minutes)\n    AND (r.workspace_id IS NULL OR bl.workspace_id = r.workspace_id)\n),\nagg AS (\n  SELECT\n    COUNT(*)::integer AS total_logs,\n    COUNT(*) FILTER (WHERE logs.result = 'error'::public.event_result)::integer AS error_logs,\n    COUNT(*) FILTER (WHERE logs.matched_rule_id IS NULL)::integer AS fallback_logs\n  FROM logs\n)\nSELECT\n  agg.total_logs,\n  agg.error_logs,\n  agg.fallback_logs,\n  CASE\n    WHEN agg.total_logs = 0 THEN 0\n    ELSE ROUND((agg.fallback_logs::numeric * 100.0) / agg.total_logs::numeric, 2)\n  END AS fallback_rate_pct\nFROM agg;",
+        "options": {
+          "queryReplacement": "={{$items('Normalize Bot Monitor Input')[0]?.json?.workspace_id ?? ''}}, {{$items('Normalize Bot Monitor Input')[0]?.json?.window_minutes ?? 15}}, {{$items('Normalize Bot Monitor Input')[0]?.json?.now_ts ?? ''}}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "id": "wf13-build-output",
+      "name": "Build 13_bot_monitor Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const cfg = $items('Normalize Bot Monitor Input')[0]?.json ?? {};\nconst row = $input.first()?.json ?? {};\n\nconst toNumber = (value, fallback = 0) => {\n  const num = Number(value);\n  return Number.isFinite(num) ? num : fallback;\n};\n\nconst totalLogs = toNumber(row.total_logs, 0);\nconst errorLogs = toNumber(row.error_logs, 0);\nconst fallbackLogs = toNumber(row.fallback_logs, 0);\nconst fallbackRatePct = toNumber(row.fallback_rate_pct, 0);\n\nconst reasons = [];\nif (errorLogs > toNumber(cfg.error_threshold, 10)) reasons.push('bot_error_spike');\nif (fallbackRatePct > toNumber(cfg.fallback_rate_threshold_pct, 50)) reasons.push('fallback_rate_high');\n\nreturn [{\n  json: {\n    ok: true,\n    run_id: cfg.run_id ?? null,\n    workspace_id: cfg.workspace_id ?? null,\n    window_minutes: toNumber(cfg.window_minutes, 15),\n    snapshot: {\n      total_logs: totalLogs,\n      error_logs: errorLogs,\n      fallback_logs: fallbackLogs,\n      fallback_rate_pct: fallbackRatePct,\n    },\n    alerts: {\n      has_alerts: reasons.length > 0,\n      reasons,\n      thresholds: {\n        error_threshold: toNumber(cfg.error_threshold, 10),\n        fallback_rate_threshold_pct: toNumber(cfg.fallback_rate_threshold_pct, 50),\n      },\n    },\n  },\n}];"
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "13 Bot Monitor Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Bot Monitor Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "13 Bot Monitor Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Bot Monitor Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Bot Monitor Input": {
+      "main": [
+        [
+          {
+            "node": "DB Bot Monitor Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Bot Monitor Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Build 13_bot_monitor Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "939901f5-5c01-4165-843b-640afc82ad81",
+  "meta": null,
+  "id": "2gAJWYZjbvlXdFUW",
+  "tags": []
+}

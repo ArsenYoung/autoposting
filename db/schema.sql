@@ -1789,6 +1789,21 @@ CREATE TABLE public.media_origin (
 ALTER TABLE public.media_origin OWNER TO neondb_owner;
 
 --
+-- Name: monitor_alert_receipts; Type: TABLE; Schema: public; Owner: neondb_owner
+--
+
+CREATE TABLE public.monitor_alert_receipts (
+    workspace_key text NOT NULL,
+    alert_fingerprint text NOT NULL,
+    first_sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    sent_count integer DEFAULT 1 NOT NULL
+);
+
+
+ALTER TABLE public.monitor_alert_receipts OWNER TO neondb_owner;
+
+--
 -- Name: messages; Type: TABLE; Schema: public; Owner: neondb_owner
 --
 
@@ -2072,6 +2087,14 @@ ALTER TABLE ONLY public.media_blobs
 
 ALTER TABLE ONLY public.media_origin
     ADD CONSTRAINT media_origin_pkey PRIMARY KEY (workspace_id, blob_ref);
+
+
+--
+-- Name: monitor_alert_receipts monitor_alert_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: neondb_owner
+--
+
+ALTER TABLE ONLY public.monitor_alert_receipts
+    ADD CONSTRAINT monitor_alert_receipts_pkey PRIMARY KEY (workspace_key, alert_fingerprint);
 
 
 --
@@ -2396,6 +2419,13 @@ CREATE INDEX ix_ingress_receipts_payload_window ON public.ingress_receipts USING
 --
 
 CREATE INDEX ix_media_blobs_provider ON public.media_blobs USING btree (workspace_id, provider, blob_ref);
+
+
+--
+-- Name: ix_monitor_alert_receipts_last_sent; Type: INDEX; Schema: public; Owner: neondb_owner
+--
+
+CREATE INDEX ix_monitor_alert_receipts_last_sent ON public.monitor_alert_receipts USING btree (last_sent_at DESC);
 
 
 --

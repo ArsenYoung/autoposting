@@ -1,0 +1,97 @@
+name: wf-tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wf-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflow-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      WF_TEST_DATABASE_URL: ${{ secrets.WF_TEST_DATABASE_URL }}
+      WF01_PUSH_WEBHOOK_URL: ${{ secrets.WF01_PUSH_WEBHOOK_URL }}
+      WF01_PULL_WEBHOOK_URL: ${{ secrets.WF01_PULL_WEBHOOK_URL }}
+      WF02_DISPATCHER_WEBHOOK_URL: ${{ secrets.WF02_DISPATCHER_WEBHOOK_URL }}
+      WF03_MONITOR_WEBHOOK_URL: ${{ secrets.WF03_MONITOR_WEBHOOK_URL }}
+      WF11_BOT_INGEST_WEBHOOK_URL: ${{ secrets.WF11_BOT_INGEST_WEBHOOK_URL }}
+      WF12_BOT_ENGINE_WEBHOOK_URL: ${{ secrets.WF12_BOT_ENGINE_WEBHOOK_URL }}
+      WF13_BOT_MONITOR_WEBHOOK_URL: ${{ secrets.WF13_BOT_MONITOR_WEBHOOK_URL }}
+      WF_ADAPTER_TELEGRAM_WEBHOOK_URL: ${{ secrets.WF_ADAPTER_TELEGRAM_WEBHOOK_URL }}
+      WF_ADAPTER_MAX_WEBHOOK_URL: ${{ secrets.WF_ADAPTER_MAX_WEBHOOK_URL }}
+      N8N_WEBHOOK_AUTH_HEADER: ${{ secrets.N8N_WEBHOOK_AUTH_HEADER }}
+      N8N_WEBHOOK_AUTH_VALUE: ${{ secrets.N8N_WEBHOOK_AUTH_VALUE }}
+      ADAPTER_TG_TARGET_ID: ${{ secrets.ADAPTER_TG_TARGET_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          required=(
+            WF_TEST_DATABASE_URL
+            WF01_PUSH_WEBHOOK_URL
+            WF01_PULL_WEBHOOK_URL
+            WF02_DISPATCHER_WEBHOOK_URL
+            WF03_MONITOR_WEBHOOK_URL
+            WF11_BOT_INGEST_WEBHOOK_URL
+            WF12_BOT_ENGINE_WEBHOOK_URL
+            WF13_BOT_MONITOR_WEBHOOK_URL
+            WF_ADAPTER_TELEGRAM_WEBHOOK_URL
+            WF_ADAPTER_MAX_WEBHOOK_URL
+            N8N_WEBHOOK_AUTH_HEADER
+            N8N_WEBHOOK_AUTH_VALUE
+            ADAPTER_TG_TARGET_ID
+          )
+          for key in "${required[@]}"; do
+            if [[ -z "${!key:-}" ]]; then
+              echo "::error::Missing required secret: $key"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+      - name: Build tests/workflows/.env
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > tests/workflows/.env <<EOF
+          DATABASE_URL="${WF_TEST_DATABASE_URL}"
+          WF01_PUSH_WEBHOOK_URL="${WF01_PUSH_WEBHOOK_URL}"
+          WF01_PULL_WEBHOOK_URL="${WF01_PULL_WEBHOOK_URL}"
+          WF02_DISPATCHER_WEBHOOK_URL="${WF02_DISPATCHER_WEBHOOK_URL}"
+          WF03_MONITOR_WEBHOOK_URL="${WF03_MONITOR_WEBHOOK_URL}"
+          WF11_BOT_INGEST_WEBHOOK_URL="${WF11_BOT_INGEST_WEBHOOK_URL}"
+          WF12_BOT_ENGINE_WEBHOOK_URL="${WF12_BOT_ENGINE_WEBHOOK_URL}"
+          WF13_BOT_MONITOR_WEBHOOK_URL="${WF13_BOT_MONITOR_WEBHOOK_URL}"
+          WF_ADAPTER_TELEGRAM_WEBHOOK_URL="${WF_ADAPTER_TELEGRAM_WEBHOOK_URL}"
+          WF_ADAPTER_MAX_WEBHOOK_URL="${WF_ADAPTER_MAX_WEBHOOK_URL}"
+          N8N_WEBHOOK_AUTH_HEADER="${N8N_WEBHOOK_AUTH_HEADER}"
+          N8N_WEBHOOK_AUTH_VALUE="${N8N_WEBHOOK_AUTH_VALUE}"
+          ADAPTER_TG_TARGET_ID="${ADAPTER_TG_TARGET_ID}"
+          EOF
+
+      - name: Run workflow test gate
+        shell: bash
+        run: make wf-tests

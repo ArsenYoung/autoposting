@@ -624,12 +624,6 @@
       ]
     },
     {
-      "parameters": {
-        "respondWith": "firstIncomingItem",
-        "options": {
-          "responseCode": "={{ Number($json.http_status_code || 200) }}"
-        }
-      },
       "id": "wf01-respond-webhook",
       "name": "Respond 01_ingest Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
@@ -637,7 +631,13 @@
       "position": [
         440,
         -80
-      ]
+      ],
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": "={{ Number($json.http_status_code || 200) }}"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -1025,10 +1025,8 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "6c55ea34-c805-4fa0-bf6d-f0df79f4440f",
-  "meta": {
-    "instanceId": "ac845f023808ccf31cb6cf4b5e79d811bd2246113c33a345a99a14afb7f8967b"
-  },
-  "id": "01_ingest_workflow",
+  "versionId": "899049d2-5020-4014-bcc7-9598b2478122",
+  "meta": null,
+  "id": "WzBdJPRlDB0spHRs",
   "tags": []
 }

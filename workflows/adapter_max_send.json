@@ -213,13 +213,6 @@
       "onError": "continueRegularOutput"
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "WITH req AS (\n  SELECT\n    NULLIF($1::text, '')::uuid AS workspace_id,\n    NULLIF($2::text, '') AS channel_id,\n    NULLIF($3::text, '') AS auth_ref\n),\ncandidate AS (\n  SELECT\n    c.auth_ref,\n    c.settings\n  FROM public.channels c\n  JOIN req r\n    ON r.workspace_id = c.workspace_id\n  WHERE c.platform = 'max'\n    AND (\n      (r.channel_id IS NOT NULL AND c.channel_id = r.channel_id)\n      OR (r.channel_id IS NULL AND r.auth_ref IS NOT NULL AND c.auth_ref = r.auth_ref)\n    )\n  ORDER BY\n    CASE\n      WHEN (SELECT channel_id FROM req) IS NOT NULL\n       AND c.channel_id = (SELECT channel_id FROM req) THEN 0\n      ELSE 1\n    END,\n    c.channel_id\n  LIMIT 1\n)\nSELECT\n  COALESCE(candidate.settings->>'max_auth', candidate.settings->>'auth_token', candidate.settings->>'token') AS auth_value,\n  COALESCE(candidate.settings->>'auth_header_name', 'Authorization') AS auth_header_name,\n  COALESCE(candidate.settings->>'max_base_url', candidate.settings->>'base_url') AS max_base_url,\n  candidate.auth_ref AS resolved_auth_ref\nFROM candidate\nUNION ALL\nSELECT\n  NULL::text AS auth_value,\n  NULL::text AS auth_header_name,\n  NULL::text AS max_base_url,\n  NULL::text AS resolved_auth_ref\nWHERE NOT EXISTS (SELECT 1 FROM candidate);",
-        "options": {
-          "queryReplacement": "={{$json.workspace_id}}, {{$json.channel_id || $json.delivery?.channel_id || ''}}, {{$json.auth_ref || $json.channel?.auth_ref || ''}}"
-        }
-      },
       "id": "max-db-resolve-auth-9b2e1d9a",
       "name": "DB Resolve MAX Auth",
       "type": "n8n-nodes-base.postgres",
@@ -228,18 +221,16 @@
         1168,
         72
       ],
-      "credentials": {
-        "postgres": {
-          "id": "x5LyxEPUED2WoWLF",
-          "name": "Neon Autoposting DB"
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH req AS (\n  SELECT\n    NULLIF($1::text, '')::uuid AS workspace_id,\n    NULLIF($2::text, '') AS channel_id,\n    NULLIF($3::text, '') AS auth_ref\n),\ncandidate AS (\n  SELECT\n    c.auth_ref,\n    c.settings\n  FROM public.channels c\n  JOIN req r\n    ON r.workspace_id = c.workspace_id\n  WHERE c.platform = 'max'\n    AND (\n      (r.channel_id IS NOT NULL AND c.channel_id = r.channel_id)\n      OR (r.channel_id IS NULL AND r.auth_ref IS NOT NULL AND c.auth_ref = r.auth_ref)\n    )\n  ORDER BY\n    CASE\n      WHEN (SELECT channel_id FROM req) IS NOT NULL\n       AND c.channel_id = (SELECT channel_id FROM req) THEN 0\n      ELSE 1\n    END,\n    c.channel_id\n  LIMIT 1\n)\nSELECT\n  COALESCE(candidate.settings->>'max_auth', candidate.settings->>'auth_token', candidate.settings->>'token') AS auth_value,\n  COALESCE(candidate.settings->>'auth_header_name', 'Authorization') AS auth_header_name,\n  COALESCE(candidate.settings->>'max_base_url', candidate.settings->>'base_url') AS max_base_url,\n  candidate.auth_ref AS resolved_auth_ref\nFROM candidate\nUNION ALL\nSELECT\n  NULL::text AS auth_value,\n  NULL::text AS auth_header_name,\n  NULL::text AS max_base_url,\n  NULL::text AS resolved_auth_ref\nWHERE NOT EXISTS (SELECT 1 FROM candidate);",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.channel_id || $json.delivery?.channel_id || ''}}, {{$json.auth_ref || $json.channel?.auth_ref || ''}}"
         }
       },
       "onError": "continueRegularOutput"
     },
     {
-      "parameters": {
-        "jsCode": "const base = $items('Normalize Adapter Input')[0]?.json ?? {};\nconst row = $input.first()?.json ?? {};\n\nconst cleanString = (value) => {\n  if (value === null || value === undefined) return '';\n  return String(value).trim();\n};\n\nconst directAuth = cleanString(base.auth_header_value);\nconst resolvedAuth = cleanString(row.auth_value);\nconst mergedAuth = directAuth || resolvedAuth;\n\nconst directHeaderName = cleanString(base.auth_header_name);\nconst resolvedHeaderName = cleanString(row.auth_header_name);\nconst mergedHeaderName = directHeaderName || resolvedHeaderName || 'Authorization';\n\nlet mergedBaseUrl = cleanString(base.max_base_url) || cleanString(row.max_base_url);\nif (!mergedBaseUrl) mergedBaseUrl = 'https://platform-api.max.ru';\nwhile (mergedBaseUrl.endsWith('/')) mergedBaseUrl = mergedBaseUrl.slice(0, -1);\n\nconst mergedAuthRef = cleanString(base.auth_ref) || cleanString(row.resolved_auth_ref);\n\nreturn [\n  {\n    json: {\n      ...base,\n      auth_ref: mergedAuthRef || null,\n      auth_header_name: mergedHeaderName,\n      auth_header_value: mergedAuth,\n      max_base_url: mergedBaseUrl,\n    },\n  },\n];"
-      },
       "id": "max-apply-auth-5c2f4a1c",
       "name": "Apply MAX Auth",
       "type": "n8n-nodes-base.code",
@@ -247,7 +238,10 @@
       "position": [
         1360,
         240
-      ]
+      ],
+      "parameters": {
+        "jsCode": "const base = $items('Normalize Adapter Input')[0]?.json ?? {};\nconst row = $input.first()?.json ?? {};\n\nconst cleanString = (value) => {\n  if (value === null || value === undefined) return '';\n  return String(value).trim();\n};\n\nconst directAuth = cleanString(base.auth_header_value);\nconst resolvedAuth = cleanString(row.auth_value);\nconst mergedAuth = directAuth || resolvedAuth;\n\nconst directHeaderName = cleanString(base.auth_header_name);\nconst resolvedHeaderName = cleanString(row.auth_header_name);\nconst mergedHeaderName = directHeaderName || resolvedHeaderName || 'Authorization';\n\nlet mergedBaseUrl = cleanString(base.max_base_url) || cleanString(row.max_base_url);\nif (!mergedBaseUrl) mergedBaseUrl = 'https://platform-api.max.ru';\nwhile (mergedBaseUrl.endsWith('/')) mergedBaseUrl = mergedBaseUrl.slice(0, -1);\n\nconst mergedAuthRef = cleanString(base.auth_ref) || cleanString(row.resolved_auth_ref);\n\nreturn [\n  {\n    json: {\n      ...base,\n      auth_ref: mergedAuthRef || null,\n      auth_header_name: mergedHeaderName,\n      auth_header_value: mergedAuth,\n      max_base_url: mergedBaseUrl,\n    },\n  },\n];"
+      }
     }
   ],
   "pinData": {},
@@ -268,17 +262,6 @@
         [
           {
             "node": "Normalize Adapter Input",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Normalize Adapter Input": {
-      "main": [
-        [
-          {
-            "node": "DB Resolve MAX Auth",
             "type": "main",
             "index": 0
           }
@@ -376,6 +359,17 @@
         ]
       ]
     },
+    "Normalize Adapter Input": {
+      "main": [
+        [
+          {
+            "node": "DB Resolve MAX Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "DB Resolve MAX Auth": {
       "main": [
         [
@@ -405,10 +399,8 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "2cf618b8-40e3-4f82-a24b-2767e1e8e620",
-  "meta": {
-    "instanceId": "ac845f023808ccf31cb6cf4b5e79d811bd2246113c33a345a99a14afb7f8967b"
-  },
+  "versionId": "8da22bc8-ec25-4b43-89ca-ccb81151e1fe",
+  "meta": null,
   "id": "Vmk0MqDaJDFos5sM",
   "tags": []
 }

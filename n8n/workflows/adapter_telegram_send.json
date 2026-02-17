@@ -2,58 +2,49 @@
   "name": "adapter_telegram_send",
   "nodes": [
     {
-      "id": "tg-exec-trigger",
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "df6817e2-3afb-4242-89b5-83a1854edb3c",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        -1100,
-        120
-      ],
-      "parameters": {
-        "inputSource": "passthrough"
-      }
+        -2704,
+        64
+      ]
     },
     {
-      "id": "tg-webhook-trigger",
-      "name": "Adapter Telegram Smoke Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2.1,
-      "position": [
-        -1100,
-        340
-      ],
       "parameters": {
         "httpMethod": "POST",
         "path": "autoposting-adapter-telegram-test",
         "responseMode": "lastNode",
-        "responseData": "firstEntryJson",
         "options": {}
-      }
+      },
+      "id": "b5329928-f5e6-43ce-99c4-3b78710a6d16",
+      "name": "Adapter Telegram Smoke Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2704,
+        288
+      ],
+      "webhookId": "7f74c0b0-e74d-4111-9cf8-b63a3b91f95d"
     },
     {
-      "id": "tg-normalize-input",
+      "parameters": {
+        "jsCode": "const src = $input.first()?.json?.body ?? $input.first()?.json ?? {};\nconst delivery = src.delivery ?? {};\nconst channel = src.channel ?? {};\nconst payload = delivery.payload ?? {};\nconst media = Array.isArray(payload.media) ? payload.media : [];\n\nconst renderedText =\n  delivery.rendered_text ??\n  src.rendered_text ??\n  payload.text ??\n  '';\n\nconst deliveryIdRaw = delivery.delivery_id ?? src.delivery_id ?? null;\nconst deliveryId =\n  deliveryIdRaw === null || deliveryIdRaw === undefined\n    ? null\n    : String(deliveryIdRaw);\n\nconst appendDeliveryId = Boolean(\n  channel.append_delivery_id ??\n    delivery.meta?.append_delivery_id ??\n    src.append_delivery_id ??\n    false,\n);\n\nconst renderedTextEffective =\n  appendDeliveryId && deliveryId\n    ? `${renderedText}\\n\\n[d:${deliveryId}]`\n    : renderedText;\n\nconst parseModeRaw = String(\n  delivery.meta?.parse_mode ?? src.meta?.parse_mode ?? 'None',\n);\nlet telegramParseMode = null;\nif (parseModeRaw === 'HTML' || parseModeRaw === 'Markdown' || parseModeRaw === 'MarkdownV2') {\n  telegramParseMode = parseModeRaw;\n}\n\nconst primaryMedia = media.length > 0 && media[0] && typeof media[0] === 'object'\n  ? media[0]\n  : null;\nconst primaryKind = String(primaryMedia?.kind ?? primaryMedia?.type ?? '').toLowerCase();\n\nlet sendRoute = 'text';\nif (media.length > 1) {\n  sendRoute = 'media_group';\n} else if (media.length === 1) {\n  sendRoute = ['video', 'gif', 'animation'].includes(primaryKind)\n    ? 'video'\n    : 'photo';\n}\n\nreturn [{\n  json: {\n    workspace_id: src.workspace_id ?? null,\n    delivery,\n    channel,\n    delivery_id: deliveryId,\n    append_delivery_id: appendDeliveryId,\n    target_id: channel.target_id ?? delivery.target_id ?? src.target_id ?? null,\n    rendered_text: renderedText,\n    rendered_text_effective: renderedTextEffective,\n    media,\n    send_route: sendRoute,\n    telegram_parse_mode: telegramParseMode,\n  },\n}];"
+      },
+      "id": "a18d9ede-031a-45d2-a5c2-9f0bb2b91c47",
       "name": "Normalize Adapter Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -860,
-        230
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const src = $input.first()?.json?.body ?? $input.first()?.json ?? {};\nconst delivery = src.delivery ?? {};\nconst channel = src.channel ?? {};\nconst payload = delivery.payload ?? {};\nconst media = Array.isArray(payload.media) ? payload.media : [];\n\nconst renderedText =\n  delivery.rendered_text ??\n  src.rendered_text ??\n  payload.text ??\n  '';\n\nconst deliveryIdRaw = delivery.delivery_id ?? src.delivery_id ?? null;\nconst deliveryId =\n  deliveryIdRaw === null || deliveryIdRaw === undefined\n    ? null\n    : String(deliveryIdRaw);\n\nconst appendDeliveryId = Boolean(\n  channel.append_delivery_id ??\n    delivery.meta?.append_delivery_id ??\n    src.append_delivery_id ??\n    false,\n);\n\nconst renderedTextEffective =\n  appendDeliveryId && deliveryId\n    ? `${renderedText}\\n\\n[d:${deliveryId}]`\n    : renderedText;\n\nconst parseModeRaw = String(\n  delivery.meta?.parse_mode ?? src.meta?.parse_mode ?? 'None',\n);\nlet telegramParseMode = null;\nif (parseModeRaw === 'HTML' || parseModeRaw === 'Markdown' || parseModeRaw === 'MarkdownV2') {\n  telegramParseMode = parseModeRaw;\n}\n\nreturn [{\n  json: {\n    workspace_id: src.workspace_id ?? null,\n    delivery,\n    channel,\n    delivery_id: deliveryId,\n    append_delivery_id: appendDeliveryId,\n    target_id: channel.target_id ?? delivery.target_id ?? src.target_id ?? null,\n    rendered_text: renderedText,\n    rendered_text_effective: renderedTextEffective,\n    media,\n    telegram_parse_mode: telegramParseMode,\n  },\n}];"
-      }
+        -2464,
+        176
+      ]
     },
     {
-      "id": "tg-if-has-target",
-      "name": "Has Target ID?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        -640,
-        230
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -77,31 +68,30 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "bd834bd7-fa55-4628-9e4d-6e5e8b16576f",
+      "name": "Has Target ID?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2240,
+        176
+      ]
     },
     {
-      "id": "tg-missing-target",
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code: 'missing_target_id',\n      message: 'channel.target_id is required for telegram adapter',\n      raw: input,\n    },\n  },\n}];"
+      },
+      "id": "88c604d7-3a79-4794-aa81-244ee0f82afa",
       "name": "Return Missing Target Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -420,
-        380
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first()?.json ?? {};\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code: 'missing_target_id',\n      message: 'channel.target_id is required for telegram adapter',\n      raw: input,\n    },\n  },\n}];"
-      }
+        -2016,
+        320
+      ]
     },
     {
-      "id": "tg-if-has-media",
-      "name": "Has Media?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        -420,
-        150
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -113,7 +103,7 @@
           "conditions": [
             {
               "id": "tg-cond-has-media",
-              "leftValue": "={{ Array.isArray($json.media) && $json.media.length > 0 }}",
+              "leftValue": "={{ ['photo', 'video', 'media_group'].includes(String($json.send_route || 'text')) }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -125,31 +115,30 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "ccecc7ac-a434-4d75-9f23-f31e5c39eb03",
+      "name": "Has Media?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2016,
+        96
+      ]
     },
     {
-      "id": "tg-select-primary",
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst sourceMedia = Array.isArray(input.media) ? input.media : [];\n\nconst normalizeKind = (item) => {\n  const kindSource = String(item?.type ?? item?.kind ?? '').toLowerCase();\n  return kindSource.includes('video') || kindSource === 'gif' || kindSource === 'animation'\n    ? 'video'\n    : 'photo';\n};\n\nconst normalizedMedia = sourceMedia\n  .map((itemRaw, index) => {\n    const item = itemRaw && typeof itemRaw === 'object' ? itemRaw : null;\n    if (!item) return null;\n\n    return {\n      index,\n      blob_ref: item.blob_ref ?? null,\n      type: item.type ?? null,\n      kind: normalizeKind(item),\n      origin_url: item.origin_url ?? null,\n      url: item.url ?? null,\n      media_url: item.media_url ?? null,\n      file_id: item.file_id ?? null,\n      telegram_file: item.file_id ?? item.telegram_file ?? null,\n    };\n  })\n  .filter(Boolean);\n\nconst primary = normalizedMedia.length > 0 ? normalizedMedia[0] : null;\n\nreturn [{\n  json: {\n    ...input,\n    normalized_media: normalizedMedia,\n    primary_media: primary,\n    has_multiple_media: normalizedMedia.length > 1,\n  },\n}];"
+      },
+      "id": "1e9cce90-522c-4a0d-8fc9-2928809b3d23",
       "name": "Select Primary Media",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -200,
-        40
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst sourceMedia = Array.isArray(input.media) ? input.media : [];\n\nconst normalizeKind = (item) => {\n  const kindSource = String(item?.type ?? item?.kind ?? '').toLowerCase();\n  return kindSource.includes('video') || kindSource === 'gif' || kindSource === 'animation'\n    ? 'video'\n    : 'photo';\n};\n\nconst normalizedMedia = sourceMedia\n  .map((itemRaw, index) => {\n    const item = itemRaw && typeof itemRaw === 'object' ? itemRaw : null;\n    if (!item) return null;\n\n    return {\n      index,\n      blob_ref: item.blob_ref ?? null,\n      type: item.type ?? null,\n      kind: normalizeKind(item),\n      origin_url: item.origin_url ?? null,\n      url: item.url ?? null,\n      media_url: item.media_url ?? null,\n      file_id: item.file_id ?? null,\n      telegram_file: item.file_id ?? item.telegram_file ?? null,\n    };\n  })\n  .filter(Boolean);\n\nconst primary = normalizedMedia.length > 0 ? normalizedMedia[0] : null;\n\nreturn [{\n  json: {\n    ...input,\n    normalized_media: normalizedMedia,\n    primary_media: primary,\n    has_multiple_media: normalizedMedia.length > 1,\n  },\n}];"
-      }
+        -1888,
+        -224
+      ]
     },
     {
-      "id": "tg-if-has-blob",
-      "name": "Primary Has Blob Ref?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        20,
-        40
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -173,17 +162,17 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "cdfedfa0-dfef-4917-a954-111ca1b232c5",
+      "name": "Primary Has Blob Ref?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1536,
+        -48
+      ]
     },
     {
-      "id": "tg-db-resolve-primary-cache",
-      "name": "DB Resolve Primary Cache",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        240,
-        -80
-      ],
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT\n  mo.origin_url,\n  mb.file_id\nFROM (SELECT $1::uuid AS workspace_id, $2::text AS blob_ref) req\nLEFT JOIN public.media_origin mo\n  ON mo.workspace_id = req.workspace_id\n AND mo.blob_ref = req.blob_ref\nLEFT JOIN public.media_blobs mb\n  ON mb.workspace_id = req.workspace_id\n AND mb.blob_ref = req.blob_ref\n AND mb.provider = 'telegram'\nLIMIT 1;",
@@ -191,6 +180,14 @@
           "queryReplacement": "={{$json.workspace_id}}, {{$json.primary_media.blob_ref}}"
         }
       },
+      "id": "99de7557-c475-41ad-a1f1-8d75592f82e0",
+      "name": "DB Resolve Primary Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1360,
+        -144
+      ],
       "credentials": {
         "postgres": {
           "id": "x5LyxEPUED2WoWLF",
@@ -200,42 +197,32 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "tg-apply-primary-cache",
+      "parameters": {
+        "jsCode": "const base = $items('Select Primary Media')[0]?.json ?? {};\nconst cache = $input.first()?.json ?? {};\n\nconst resolvedPrimaryFile =\n  cache.file_id ??\n  base.primary_media?.telegram_file ??\n  cache.origin_url ??\n  base.primary_media?.origin_url ??\n  base.primary_media?.url ??\n  base.primary_media?.media_url ??\n  null;\n\nconst primary = base.primary_media\n  ? {\n      ...base.primary_media,\n      telegram_file: resolvedPrimaryFile,\n    }\n  : null;\n\nconst normalizedMedia = Array.isArray(base.normalized_media)\n  ? base.normalized_media.map((item, index) => {\n      if (index !== 0 || !item || typeof item !== 'object') return item;\n      return {\n        ...item,\n        telegram_file: resolvedPrimaryFile,\n      };\n    })\n  : [];\n\nreturn [{\n  json: {\n    ...base,\n    primary_media: primary,\n    normalized_media: normalizedMedia,\n  },\n}];"
+      },
+      "id": "6e8b1d57-3b21-4594-9750-d581669ad1de",
       "name": "Apply Primary Cache",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        460,
-        -80
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const base = $items('Select Primary Media')[0]?.json ?? {};\nconst cache = $input.first()?.json ?? {};\n\nconst resolvedPrimaryFile =\n  cache.file_id ??\n  base.primary_media?.telegram_file ??\n  cache.origin_url ??\n  base.primary_media?.origin_url ??\n  base.primary_media?.url ??\n  base.primary_media?.media_url ??\n  null;\n\nconst primary = base.primary_media\n  ? {\n      ...base.primary_media,\n      telegram_file: resolvedPrimaryFile,\n    }\n  : null;\n\nconst normalizedMedia = Array.isArray(base.normalized_media)\n  ? base.normalized_media.map((item, index) => {\n      if (index !== 0 || !item || typeof item !== 'object') return item;\n      return {\n        ...item,\n        telegram_file: resolvedPrimaryFile,\n      };\n    })\n  : [];\n\nreturn [{\n  json: {\n    ...base,\n    primary_media: primary,\n    normalized_media: normalizedMedia,\n  },\n}];"
-      }
+        -1136,
+        -144
+      ]
     },
     {
-      "id": "tg-primary-no-cache",
+      "parameters": {
+        "jsCode": "const base = $input.first()?.json ?? {};\n\nconst resolvedPrimaryFile =\n  base.primary_media?.telegram_file ??\n  base.primary_media?.origin_url ??\n  base.primary_media?.url ??\n  base.primary_media?.media_url ??\n  null;\n\nconst primary = base.primary_media\n  ? {\n      ...base.primary_media,\n      telegram_file: resolvedPrimaryFile,\n    }\n  : null;\n\nconst normalizedMedia = Array.isArray(base.normalized_media)\n  ? base.normalized_media.map((item, index) => {\n      if (index !== 0 || !item || typeof item !== 'object') return item;\n      return {\n        ...item,\n        telegram_file: resolvedPrimaryFile,\n      };\n    })\n  : [];\n\nreturn [{\n  json: {\n    ...base,\n    primary_media: primary,\n    normalized_media: normalizedMedia,\n  },\n}];"
+      },
+      "id": "dc3f86d5-359b-431e-80f8-49f58d8131f3",
       "name": "Primary Without Cache",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
-        160
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const base = $input.first()?.json ?? {};\n\nconst resolvedPrimaryFile =\n  base.primary_media?.telegram_file ??\n  base.primary_media?.origin_url ??\n  base.primary_media?.url ??\n  base.primary_media?.media_url ??\n  null;\n\nconst primary = base.primary_media\n  ? {\n      ...base.primary_media,\n      telegram_file: resolvedPrimaryFile,\n    }\n  : null;\n\nconst normalizedMedia = Array.isArray(base.normalized_media)\n  ? base.normalized_media.map((item, index) => {\n      if (index !== 0 || !item || typeof item !== 'object') return item;\n      return {\n        ...item,\n        telegram_file: resolvedPrimaryFile,\n      };\n    })\n  : [];\n\nreturn [{\n  json: {\n    ...base,\n    primary_media: primary,\n    normalized_media: normalizedMedia,\n  },\n}];"
-      }
+        -1360,
+        96
+      ]
     },
     {
-      "id": "tg-if-video",
-      "name": "Is Video Media?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        680,
-        40
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -247,7 +234,7 @@
           "conditions": [
             {
               "id": "tg-cond-is-video",
-              "leftValue": "={{ !!$json.primary_media && ['video', 'gif', 'animation'].includes(String($json.primary_media.kind || '').toLowerCase()) }}",
+              "leftValue": "={{ String($json.send_route || '') === 'video' }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -259,20 +246,18 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "a1e6aba4-b2e3-41fe-829d-b61576c7a1d3",
+      "name": "Is Video Media?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -912,
+        -16
+      ]
     },
     {
-      "id": "tg-send-text",
-      "name": "Telegram Send Text",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        -200,
-        260
-      ],
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
         "chatId": {
           "__rl": true,
           "value": "={{$json.target_id}}",
@@ -280,10 +265,19 @@
         },
         "text": "={{$json.rendered_text_effective ?? $json.rendered_text}}",
         "additionalFields": {
-          "parse_mode": "={{$json.telegram_parse_mode || undefined}}",
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "={{$json.telegram_parse_mode || undefined}}"
         }
       },
+      "id": "4296cc1e-a81b-4919-99d3-a18c58db2858",
+      "name": "Telegram Send Text",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1808,
+        208
+      ],
+      "webhookId": "51e7c8c3-ac95-44f9-a94e-c56a1ed1bc7a",
       "credentials": {
         "telegramApi": {
           "id": "tjUozZ8hx8ajiIul",
@@ -293,29 +287,28 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "tg-send-photo",
-      "name": "Telegram Send Photo",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        900,
-        140
-      ],
       "parameters": {
-        "resource": "message",
         "operation": "sendPhoto",
         "chatId": {
           "__rl": true,
           "value": "={{$json.target_id}}",
           "mode": "expression"
         },
-        "binaryData": false,
         "file": "={{$json.primary_media.telegram_file}}",
         "additionalFields": {
           "caption": "={{$json.rendered_text_effective ?? $json.rendered_text}}",
           "parse_mode": "={{$json.telegram_parse_mode || undefined}}"
         }
       },
+      "id": "b9e9a610-5a8d-4678-ad65-dfc8d05e06af",
+      "name": "Telegram Send Photo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -688,
+        80
+      ],
+      "webhookId": "6978ecfe-fe70-43fb-ab84-76b740ee30ae",
       "credentials": {
         "telegramApi": {
           "id": "tjUozZ8hx8ajiIul",
@@ -325,29 +318,28 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "tg-send-video",
-      "name": "Telegram Send Video",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        900,
-        -60
-      ],
       "parameters": {
-        "resource": "message",
         "operation": "sendVideo",
         "chatId": {
           "__rl": true,
           "value": "={{$json.target_id}}",
           "mode": "expression"
         },
-        "binaryData": false,
         "file": "={{$json.primary_media.telegram_file}}",
         "additionalFields": {
           "caption": "={{$json.rendered_text_effective ?? $json.rendered_text}}",
           "parse_mode": "={{$json.telegram_parse_mode || undefined}}"
         }
       },
+      "id": "a4677272-2127-4aa9-b21f-b447e09fa700",
+      "name": "Telegram Send Video",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -688,
+        -128
+      ],
+      "webhookId": "57f1243b-7dee-43e7-971c-8fdb36e6812f",
       "credentials": {
         "telegramApi": {
           "id": "tjUozZ8hx8ajiIul",
@@ -357,28 +349,20 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "tg-normalize-result",
+      "parameters": {
+        "jsCode": "const rawInputItems = $input.all().map((item) => item?.json ?? {});\nconst raw = rawInputItems[0] ?? {};\n\nconst extractMessage = (err) => {\n  if (typeof err === 'string') return err;\n  return String(\n    err?.message ??\n      err?.description ??\n      err?.error ??\n      err?.response?.body?.description ??\n      err?.response?.body?.message ??\n      'telegram_send_failed',\n  );\n};\n\nconst extractCode = (err) => {\n  const candidates = [\n    err?.httpCode,\n    err?.statusCode,\n    err?.code,\n    err?.response?.statusCode,\n    err?.response?.body?.error_code,\n    err?.response?.body?.code,\n    err?.error_code,\n    err?.error?.code,\n  ];\n\n  for (const value of candidates) {\n    const num = Number(value);\n    if (Number.isFinite(num) && num > 0) return num;\n  }\n\n  return 0;\n};\n\nconst pushRetryCandidate = (bucket, value) => {\n  if (value === null || value === undefined) return;\n  if (Array.isArray(value)) {\n    for (const entry of value) {\n      pushRetryCandidate(bucket, entry);\n    }\n    return;\n  }\n  bucket.push(value);\n};\n\nconst extractRetryAfterMs = (err, message) => {\n  const candidates = [];\n  pushRetryCandidate(candidates, err?.parameters?.retry_after);\n  pushRetryCandidate(candidates, err?.response?.body?.parameters?.retry_after);\n  pushRetryCandidate(candidates, err?.response?.body?.result?.parameters?.retry_after);\n  pushRetryCandidate(candidates, err?.response?.body?.error?.parameters?.retry_after);\n  pushRetryCandidate(candidates, err?.error?.parameters?.retry_after);\n  pushRetryCandidate(candidates, err?.retry_after);\n  pushRetryCandidate(candidates, err?.response?.headers?.['retry-after']);\n  pushRetryCandidate(candidates, err?.response?.headers?.['Retry-After']);\n  pushRetryCandidate(candidates, err?.headers?.['retry-after']);\n  pushRetryCandidate(candidates, err?.headers?.['Retry-After']);\n\n  for (const candidate of candidates) {\n    const num = Number(candidate);\n    if (Number.isFinite(num) && num > 0) {\n      return Math.round(num * 1000);\n    }\n  }\n\n  const retryMatch = String(message).match(/retry after\\s*(\\d+)/i);\n  if (retryMatch) {\n    const sec = Number(retryMatch[1]);\n    if (Number.isFinite(sec) && sec > 0) {\n      return Math.round(sec * 1000);\n    }\n  }\n\n  return null;\n};\n\nconst classifyError = (err) => {\n  const message = extractMessage(err);\n  const code = extractCode(err);\n\n  let category = 'PERMANENT';\n  let scope = 'delivery';\n  let normalizedCode = 'telegram_bad_request';\n\n  const channelUnavailablePattern =\n    /chat not found|bot was kicked|bot was blocked by the user|user is deactivated|group chat was deleted|chat_write_forbidden|have no rights to send a message|need administrator rights|bot can't initiate conversation/i;\n\n  if (code === 429 || /retry after/i.test(message)) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'rate_limited';\n  } else if (\n    code >= 500 ||\n    /timed out|timeout|network|socket|econn|etimedout|fetch failed/i.test(message)\n  ) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'upstream_unavailable';\n  } else if (/message is too long|text is too long|caption is too long/i.test(message)) {\n    category = 'PERMANENT';\n    scope = 'delivery';\n    normalizedCode = 'message_too_long';\n  } else if (code === 401 || channelUnavailablePattern.test(message)) {\n    category = 'PERMANENT';\n    scope = 'channel';\n    normalizedCode = 'channel_unavailable';\n  }\n\n  const retryAfterMs = extractRetryAfterMs(err, message);\n\n  return {\n    category,\n    scope,\n    code: normalizedCode,\n    retry_after_ms: Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,\n    message,\n    raw: err,\n  };\n};\n\nconst itemsOrEmpty = (nodeName) => {\n  try {\n    return $items(nodeName);\n  } catch {\n    return [];\n  }\n};\n\nconst context =\n  itemsOrEmpty('Build Media Group Payload')[0]?.json ??\n  itemsOrEmpty('Apply Media Group Cache')[0]?.json ??\n  itemsOrEmpty('Apply Primary Cache')[0]?.json ??\n  itemsOrEmpty('Primary Without Cache')[0]?.json ??\n  itemsOrEmpty('Select Primary Media')[0]?.json ??\n  itemsOrEmpty('Normalize Adapter Input')[0]?.json ??\n  {};\n\nconst sendRoute = String(context?.send_route ?? '').trim();\n\nif (raw?.ok === false && raw?.error) {\n  return [{ json: { result: raw, cache_updates: [], cache_updates_json: '[]' } }];\n}\n\nconst executionError = rawInputItems.find((item) => item?.error);\nif (executionError?.error) {\n  return [\n    {\n      json: {\n        result: {\n          ok: false,\n          error: classifyError(executionError.error),\n        },\n        cache_updates: [],\n        cache_updates_json: '[]',\n      },\n    },\n  ];\n}\n\nif (sendRoute && sendRoute !== 'media_group' && rawInputItems.length > 1) {\n  return [\n    {\n      json: {\n        result: {\n          ok: false,\n          error: {\n            category: 'TRANSIENT',\n            scope: 'platform',\n            code: 'multiple_send_paths_detected',\n            message: `expected exactly one telegram send path for route=${sendRoute}, got ${rawInputItems.length} items`,\n            raw: rawInputItems,\n          },\n        },\n        cache_updates: [],\n        cache_updates_json: '[]',\n      },\n    },\n  ];\n}\n\nconst toResultItems = (value) => {\n  const envelope = value?.body?.result ?? value?.result ?? value;\n  if (Array.isArray(envelope)) {\n    return envelope.filter((item) => item && typeof item === 'object');\n  }\n  if (envelope && typeof envelope === 'object') {\n    return [envelope];\n  }\n  return [];\n};\n\nconst resultItems = rawInputItems.flatMap(toResultItems);\nconst firstResult = resultItems[0] ?? {};\n\nconst providerMessageId =\n  firstResult?.message_id ??\n  firstResult?.id ??\n  raw?.message_id ??\n  ('tg-' + Date.now());\n\nconst pickPhotoFileId = (value) => {\n  const photoArray = value?.photo ?? value?.message?.photo ?? [];\n  if (Array.isArray(photoArray) && photoArray.length > 0) {\n    const photo = photoArray[photoArray.length - 1];\n    return photo?.file_id ? String(photo.file_id) : null;\n  }\n  return null;\n};\n\nconst pickVideoFileId = (value) => {\n  const fileId = value?.video?.file_id ?? value?.message?.video?.file_id ?? null;\n  return fileId ? String(fileId) : null;\n};\n\nconst pickFileIdByKind = (value, expectedKind) => {\n  if (!value || typeof value !== 'object') return null;\n  if (expectedKind === 'video') {\n    return pickVideoFileId(value) ?? pickPhotoFileId(value);\n  }\n  return pickPhotoFileId(value) ?? pickVideoFileId(value);\n};\n\nconst workspaceId =\n  context?.workspace_id === null || context?.workspace_id === undefined\n    ? null\n    : String(context.workspace_id);\n\nconst normalizedMedia = Array.isArray(context?.normalized_media)\n  ? context.normalized_media\n  : [];\n\nconst cacheByBlobRef = {};\nfor (let index = 0; index < normalizedMedia.length; index += 1) {\n  const mediaItemRaw = normalizedMedia[index];\n  const mediaItem = mediaItemRaw && typeof mediaItemRaw === 'object' ? mediaItemRaw : null;\n  if (!mediaItem || !workspaceId) continue;\n\n  const blobRef =\n    mediaItem.blob_ref === null || mediaItem.blob_ref === undefined\n      ? ''\n      : String(mediaItem.blob_ref).trim();\n  if (!blobRef) continue;\n\n  const expectedKind = String(mediaItem.kind ?? mediaItem.type ?? '').toLowerCase().includes('video')\n    ? 'video'\n    : 'photo';\n\n  let fileId = pickFileIdByKind(resultItems[index] ?? null, expectedKind);\n  if (!fileId) {\n    for (const item of resultItems) {\n      fileId = pickFileIdByKind(item, expectedKind);\n      if (fileId) break;\n    }\n  }\n\n  if (!fileId) continue;\n\n  cacheByBlobRef[blobRef] = {\n    workspace_id: workspaceId,\n    blob_ref: blobRef,\n    file_id: fileId,\n  };\n}\n\nconst cacheUpdates = Object.values(cacheByBlobRef);\n\nreturn [\n  {\n    json: {\n      result: {\n        ok: true,\n        provider_message_id: String(providerMessageId),\n        delivery_id: context.delivery_id ?? null,\n        raw: rawInputItems.length === 1 ? rawInputItems[0] : rawInputItems,\n      },\n      cache_updates: cacheUpdates,\n      cache_updates_json: JSON.stringify(cacheUpdates),\n    },\n  },\n];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "9771a694-9b1e-49de-8a94-220a25132724",
       "name": "Normalize Telegram Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
-        130
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const rawInputItems = $input.all().map((item) => item?.json ?? {});\nconst raw = rawInputItems[0] ?? {};\n\nconst classifyError = (err) => {\n  const message = String(\n    typeof err === 'string'\n      ? err\n      : err?.message ?? err?.description ?? err?.error ?? 'telegram_send_failed',\n  );\n  const code = Number(\n    typeof err === 'object' && err\n      ? err.httpCode ?? err.statusCode ?? err.code ?? 0\n      : 0,\n  );\n\n  let category = 'PERMANENT';\n  let scope = 'delivery';\n  let normalizedCode = 'telegram_bad_request';\n\n  const channelUnavailablePattern =\n    /chat not found|bot was kicked|bot was blocked by the user|user is deactivated|group chat was deleted|chat_write_forbidden|have no rights to send a message|need administrator rights|bot can't initiate conversation/i;\n\n  if (code === 429 || /retry after/i.test(message)) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'rate_limited';\n  } else if (\n    code >= 500 ||\n    /timed out|timeout|network|socket|econn|etimedout|fetch failed/i.test(message)\n  ) {\n    category = 'TRANSIENT';\n    scope = 'platform';\n    normalizedCode = 'upstream_unavailable';\n  } else if (/message is too long|text is too long|caption is too long/i.test(message)) {\n    category = 'PERMANENT';\n    scope = 'delivery';\n    normalizedCode = 'message_too_long';\n  } else if (code === 401 || channelUnavailablePattern.test(message)) {\n    category = 'PERMANENT';\n    scope = 'channel';\n    normalizedCode = 'channel_unavailable';\n  }\n\n  const retryMatch = message.match(/retry after\\s*(\\d+)/i);\n  const retryAfterMs = retryMatch ? Number(retryMatch[1]) * 1000 : null;\n\n  return {\n    category,\n    scope,\n    code: normalizedCode,\n    retry_after_ms: Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,\n    message,\n    raw: err,\n  };\n};\n\nconst itemsOrEmpty = (nodeName) => {\n  try {\n    return $items(nodeName);\n  } catch {\n    return [];\n  }\n};\n\nconst context =\n  itemsOrEmpty('Build Media Group Payload')[0]?.json ??\n  itemsOrEmpty('Apply Media Group Cache')[0]?.json ??\n  itemsOrEmpty('Apply Primary Cache')[0]?.json ??\n  itemsOrEmpty('Primary Without Cache')[0]?.json ??\n  itemsOrEmpty('Select Primary Media')[0]?.json ??\n  itemsOrEmpty('Normalize Adapter Input')[0]?.json ??\n  {};\n\nif (raw?.ok === false && raw?.error) {\n  return [{ json: { result: raw, cache_updates: [], cache_updates_json: '[]' } }];\n}\n\nconst executionError = rawInputItems.find((item) => item?.error);\nif (executionError?.error) {\n  return [\n    {\n      json: {\n        result: {\n          ok: false,\n          error: classifyError(executionError.error),\n        },\n        cache_updates: [],\n        cache_updates_json: '[]',\n      },\n    },\n  ];\n}\n\nconst toResultItems = (value) => {\n  const envelope = value?.body?.result ?? value?.result ?? value;\n  if (Array.isArray(envelope)) {\n    return envelope.filter((item) => item && typeof item === 'object');\n  }\n  if (envelope && typeof envelope === 'object') {\n    return [envelope];\n  }\n  return [];\n};\n\nconst resultItems = rawInputItems.flatMap(toResultItems);\nconst firstResult = resultItems[0] ?? {};\n\nconst providerMessageId =\n  firstResult?.message_id ??\n  firstResult?.id ??\n  raw?.message_id ??\n  ('tg-' + Date.now());\n\nconst pickPhotoFileId = (value) => {\n  const photoArray = value?.photo ?? value?.message?.photo ?? [];\n  if (Array.isArray(photoArray) && photoArray.length > 0) {\n    const photo = photoArray[photoArray.length - 1];\n    return photo?.file_id ? String(photo.file_id) : null;\n  }\n  return null;\n};\n\nconst pickVideoFileId = (value) => {\n  const fileId = value?.video?.file_id ?? value?.message?.video?.file_id ?? null;\n  return fileId ? String(fileId) : null;\n};\n\nconst pickFileIdByKind = (value, expectedKind) => {\n  if (!value || typeof value !== 'object') return null;\n  if (expectedKind === 'video') {\n    return pickVideoFileId(value) ?? pickPhotoFileId(value);\n  }\n  return pickPhotoFileId(value) ?? pickVideoFileId(value);\n};\n\nconst workspaceId =\n  context?.workspace_id === null || context?.workspace_id === undefined\n    ? null\n    : String(context.workspace_id);\n\nconst normalizedMedia = Array.isArray(context?.normalized_media)\n  ? context.normalized_media\n  : [];\n\nconst cacheByBlobRef = {};\nfor (let index = 0; index < normalizedMedia.length; index += 1) {\n  const mediaItemRaw = normalizedMedia[index];\n  const mediaItem = mediaItemRaw && typeof mediaItemRaw === 'object' ? mediaItemRaw : null;\n  if (!mediaItem || !workspaceId) continue;\n\n  const blobRef =\n    mediaItem.blob_ref === null || mediaItem.blob_ref === undefined\n      ? ''\n      : String(mediaItem.blob_ref).trim();\n  if (!blobRef) continue;\n\n  const expectedKind = String(mediaItem.kind ?? mediaItem.type ?? '').toLowerCase().includes('video')\n    ? 'video'\n    : 'photo';\n\n  let fileId = pickFileIdByKind(resultItems[index] ?? null, expectedKind);\n  if (!fileId) {\n    for (const item of resultItems) {\n      fileId = pickFileIdByKind(item, expectedKind);\n      if (fileId) break;\n    }\n  }\n\n  if (!fileId) continue;\n\n  cacheByBlobRef[blobRef] = {\n    workspace_id: workspaceId,\n    blob_ref: blobRef,\n    file_id: fileId,\n  };\n}\n\nconst cacheUpdates = Object.values(cacheByBlobRef);\n\nreturn [\n  {\n    json: {\n      result: {\n        ok: true,\n        provider_message_id: String(providerMessageId),\n        delivery_id: context.delivery_id ?? null,\n        raw: rawInputItems.length === 1 ? rawInputItems[0] : rawInputItems,\n      },\n      cache_updates: cacheUpdates,\n      cache_updates_json: JSON.stringify(cacheUpdates),\n    },\n  },\n];"
-      }
+        -480,
+        80
+      ]
     },
     {
-      "id": "tg-if-cache-upsert",
-      "name": "Has Cache Update?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1340,
-        130
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -402,17 +386,17 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "e0df5738-bcad-4209-9fec-456b9e87a2af",
+      "name": "Has Cache Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -256,
+        80
+      ]
     },
     {
-      "id": "tg-db-upsert-cache",
-      "name": "DB Upsert Telegram Media Cache",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1560,
-        20
-      ],
       "parameters": {
         "operation": "executeQuery",
         "query": "WITH updates AS (\n  SELECT\n    NULLIF(entry.workspace_id, '')::uuid AS workspace_id,\n    NULLIF(entry.blob_ref, '') AS blob_ref,\n    NULLIF(entry.file_id, '') AS file_id\n  FROM jsonb_to_recordset(COALESCE(NULLIF($1::text, ''), '[]')::jsonb) AS entry(\n    workspace_id text,\n    blob_ref text,\n    file_id text\n  )\n),\nupserted AS (\n  INSERT INTO public.media_blobs (\n    workspace_id,\n    blob_ref,\n    provider,\n    file_id,\n    meta,\n    created_at,\n    updated_at\n  )\n  SELECT\n    u.workspace_id,\n    u.blob_ref,\n    'telegram',\n    u.file_id,\n    '{}'::jsonb,\n    now(),\n    now()\n  FROM updates u\n  WHERE u.workspace_id IS NOT NULL\n    AND u.blob_ref IS NOT NULL\n    AND u.file_id IS NOT NULL\n  ON CONFLICT (workspace_id, blob_ref, provider)\n  DO UPDATE SET\n    file_id = EXCLUDED.file_id,\n    updated_at = now()\n)\nSELECT COALESCE($2::jsonb, '{}'::jsonb) AS result_json;",
@@ -420,6 +404,14 @@
           "queryReplacement": "={{$json.cache_updates_json ?? \"[]\"}}, {{ JSON.stringify($json.result ?? {}) }}"
         }
       },
+      "id": "a921c568-88a6-4f11-897f-253b6f291238",
+      "name": "DB Upsert Telegram Media Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -32,
+        -32
+      ],
       "credentials": {
         "postgres": {
           "id": "x5LyxEPUED2WoWLF",
@@ -429,28 +421,19 @@
       "onError": "continueRegularOutput"
     },
     {
-      "id": "tg-finalize-output",
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\nif (input?.result_json) {\n  return [{ json: input.result_json }];\n}\nif (input?.result) {\n  return [{ json: input.result }];\n}\nif (input?.ok === true || input?.ok === false) {\n  return [{ json: input }];\n}\n\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'adapter_output_unexpected',\n      message: 'adapter_telegram_send returned unexpected payload shape',\n      raw: input,\n    },\n  },\n}];"
+      },
+      "id": "688339f0-ba38-4505-8fca-3f6fa4fbfe7b",
       "name": "Finalize Adapter Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1780,
-        150
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first()?.json ?? {};\nif (input?.result_json) {\n  return [{ json: input.result_json }];\n}\nif (input?.result) {\n  return [{ json: input.result }];\n}\nif (input?.ok === true || input?.ok === false) {\n  return [{ json: input }];\n}\n\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'adapter_output_unexpected',\n      message: 'adapter_telegram_send returned unexpected payload shape',\n      raw: input,\n    },\n  },\n}];"
-      }
+        208,
+        96
+      ]
     },
     {
-      "id": "tg-if-multiple-media",
-      "name": "Has Multiple Media?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        32,
-        -144
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -462,7 +445,7 @@
           "conditions": [
             {
               "id": "tg-cond-has-multiple-media",
-              "leftValue": "={{ Array.isArray($json.normalized_media) && $json.normalized_media.length > 1 }}",
+              "leftValue": "={{ String($json.send_route || '') === 'media_group' }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -474,31 +457,30 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "72baecff-efd1-4f5c-a18b-1e95cce4c12e",
+      "name": "Has Multiple Media?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1696,
+        -224
+      ]
     },
     {
-      "id": "tg-build-media-group",
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\nconst media = Array.isArray(input.normalized_media) ? input.normalized_media : [];\nconst parseMode = input.telegram_parse_mode ?? null;\nconst caption = String(input.rendered_text_effective ?? input.rendered_text ?? '');\n\nif (media.length < 2) {\n  return [{ json: { ...input, telegram_media_group_payload: { media: [] } } }];\n}\n\nconst groupItems = [];\n\nfor (let index = 0; index < media.length; index += 1) {\n  const item = media[index] ?? {};\n  if (!item || typeof item !== 'object') continue;\n\n  const mediaValue =\n    item.file_id ??\n    item.telegram_file ??\n    item.origin_url ??\n    item.url ??\n    item.media_url ??\n    null;\n\n  if (!mediaValue) {\n    return [\n      {\n        json: {\n          ok: false,\n          error: {\n            category: 'PERMANENT',\n            scope: 'delivery',\n            code: 'media_missing_origin',\n            message: `media[${index}] missing origin_url/url/media_url or cached file_id`,\n            raw: { index, item },\n          },\n        },\n      },\n    ];\n  }\n\n  const mediaType = String(item.kind ?? item.type ?? '').toLowerCase().includes('video')\n    ? 'video'\n    : 'photo';\n\n  const entry = {\n    type: mediaType,\n    media: String(mediaValue),\n  };\n\n  if (index === 0 && caption) {\n    entry.caption = caption;\n  }\n  if (index === 0 && parseMode) {\n    entry.parse_mode = parseMode;\n  }\n\n  groupItems.push(entry);\n}\n\nreturn [{\n  json: {\n    ...input,\n    telegram_media_group_payload: {\n      media: groupItems,\n    },\n  },\n}];"
+      },
+      "id": "3388196f-8e18-42c6-856e-a28aacc38d09",
       "name": "Build Media Group Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        240,
-        -304
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first()?.json ?? {};\nconst media = Array.isArray(input.normalized_media) ? input.normalized_media : [];\nconst parseMode = input.telegram_parse_mode ?? null;\nconst caption = String(input.rendered_text_effective ?? input.rendered_text ?? '');\n\nif (media.length < 2) {\n  return [{ json: { ...input, telegram_media_group_payload: { media: [] } } }];\n}\n\nconst groupItems = [];\n\nfor (let index = 0; index < media.length; index += 1) {\n  const item = media[index] ?? {};\n  if (!item || typeof item !== 'object') continue;\n\n  const mediaValue =\n    item.file_id ??\n    item.telegram_file ??\n    item.origin_url ??\n    item.url ??\n    item.media_url ??\n    null;\n\n  if (!mediaValue) {\n    return [\n      {\n        json: {\n          ok: false,\n          error: {\n            category: 'PERMANENT',\n            scope: 'delivery',\n            code: 'media_missing_origin',\n            message: `media[${index}] missing origin_url/url/media_url or cached file_id`,\n            raw: { index, item },\n          },\n        },\n      },\n    ];\n  }\n\n  const mediaType = String(item.kind ?? item.type ?? '').toLowerCase().includes('video')\n    ? 'video'\n    : 'photo';\n\n  const entry = {\n    type: mediaType,\n    media: String(mediaValue),\n  };\n\n  if (index === 0 && caption) {\n    entry.caption = caption;\n  }\n  if (index === 0 && parseMode) {\n    entry.parse_mode = parseMode;\n  }\n\n  groupItems.push(entry);\n}\n\nreturn [{\n  json: {\n    ...input,\n    telegram_media_group_payload: {\n      media: groupItems,\n    },\n  },\n}];"
-      }
+        -1360,
+        -368
+      ]
     },
     {
-      "id": "tg-send-media-group",
-      "name": "Telegram Send Media Group",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        912,
-        -272
-      ],
       "parameters": {
         "operation": "sendMediaGroup",
         "chatId": {
@@ -506,20 +488,27 @@
           "value": "={{$json.target_id}}",
           "mode": "expression"
         },
-        "media": "={{$json.telegram_media_group_payload}}",
-        "additionalFields": {}
+        "additionalFields": {},
+        "media": "={{$json.telegram_media_group_payload}}"
+      },
+      "id": "a408aeef-3450-440c-a762-7f819f51bcc5",
+      "name": "Telegram Send Media Group",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -688,
+        -336
+      ],
+      "webhookId": "65368b38-59b0-4ff0-a12e-2753e10082d5",
+      "credentials": {
+        "telegramApi": {
+          "id": "tjUozZ8hx8ajiIul",
+          "name": "AutoPostAssistantBot"
+        }
       },
       "onError": "continueRegularOutput"
     },
     {
-      "id": "tg-if-group-build-error",
-      "name": "Media Group Build Error?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        464,
-        -304
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -543,7 +532,15 @@
           "combinator": "and"
         },
         "options": {}
-      }
+      },
+      "id": "8f712c2f-8ae8-4768-ae34-03f2f64616ca",
+      "name": "Media Group Build Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1136,
+        -368
+      ]
     },
     {
       "parameters": {
@@ -570,13 +567,13 @@
         },
         "options": {}
       },
-      "id": "tg-if-primary-cache-row",
+      "id": "18f8f4f0-3474-4cc7-82de-20264abf7cf2",
       "name": "Primary Cache Row Available?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        350,
-        -80
+        -1250,
+        -144
       ]
     },
     {
@@ -664,6 +661,7 @@
       ]
     }
   ],
+  "pinData": {},
   "connections": {
     "When Executed by Another Workflow": {
       "main": [
@@ -1026,9 +1024,17 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
-  }
+  },
+  "versionId": "cf719c11-0f04-47f6-9178-b22a8f0a24d9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ac845f023808ccf31cb6cf4b5e79d811bd2246113c33a345a99a14afb7f8967b"
+  },
+  "id": "qtz22d6Gz7x4MDxg",
+  "tags": []
 }

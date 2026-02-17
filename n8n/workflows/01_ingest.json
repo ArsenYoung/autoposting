@@ -5,7 +5,7 @@
       "parameters": {
         "path": "wf01-ingest-push",
         "httpMethod": "POST",
-        "responseMode": "lastNode",
+        "responseMode": "responseNode",
         "options": {}
       },
       "id": "wf01-push-webhook",
@@ -16,13 +16,14 @@
         -2440,
         -260
       ],
-      "webhookId": "wf01-ingest-push"
+      "webhookId": "wf01-ingest-push",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "path": "wf01-ingest-pull",
         "httpMethod": "POST",
-        "responseMode": "lastNode",
+        "responseMode": "responseNode",
         "options": {}
       },
       "id": "wf01-pull-webhook",
@@ -33,7 +34,8 @@
         -2440,
         380
       ],
-      "webhookId": "wf01-ingest-pull"
+      "webhookId": "wf01-ingest-pull",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -160,7 +162,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $items('Push Normalize Input')[0]?.json ?? {};\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\nconst secretHeaderName = String(env.INGEST_SECRET_HEADER || 'X-Autoposting-Secret');\n\nconst hasSecret = !!input.ingest_secret;\nconst code = hasSecret ? 'endpoint_auth_failed' : 'missing_endpoint_secret';\nconst message = hasSecret\n  ? 'push endpoint secret is invalid'\n  : 'push endpoint secret header is missing';\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'push',\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code,\n      message,\n      raw: {\n        reason: hasSecret ? 'invalid_secret' : 'missing_secret',\n        has_secret: hasSecret,\n        secret_header_name: secretHeaderName,\n      },\n    },\n  },\n}];"
+        "jsCode": "const input = $items('Push Normalize Input')[0]?.json ?? {};\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\nconst secretHeaderName = String(env.INGEST_SECRET_HEADER || 'X-Autoposting-Secret');\n\nconst hasSecret = !!input.ingest_secret;\nconst code = hasSecret ? 'endpoint_auth_failed' : 'missing_endpoint_secret';\nconst message = hasSecret\n  ? 'push endpoint secret is invalid'\n  : 'push endpoint secret header is missing';\nconst httpStatusCode = hasSecret ? 403 : 401;\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'push',\n    http_status_code: httpStatusCode,\n    error: {\n      category: 'PERMANENT',\n      scope: 'endpoint',\n      code,\n      message,\n      raw: {\n        reason: hasSecret ? 'invalid_secret' : 'missing_secret',\n        has_secret: hasSecret,\n        secret_header_name: secretHeaderName,\n      },\n    },\n  },\n}];"
       },
       "id": "wf01-push-endpoint-error",
       "name": "Push Return Endpoint Error",
@@ -187,9 +189,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO public.ingest_runs (\n  workspace_id,\n  run_id,\n  kind,\n  endpoint_id,\n  started_at,\n  stats_json\n) VALUES (\n  $1::uuid,\n  $2::text,\n  'push',\n  $3::uuid,\n  $4::timestamptz,\n  '{}'::jsonb\n)\nON CONFLICT (workspace_id, run_id) DO NOTHING;\n\nSELECT $1::uuid AS workspace_id, $2::text AS run_id;",
+        "query": "INSERT INTO public.ingest_runs (\n  workspace_id,\n  run_id,\n  kind,\n  endpoint_id,\n  started_at,\n  stats_json\n) VALUES (\n  $1::uuid,\n  $2::text,\n  'push',\n  $3::uuid,\n  $4::timestamptz,\n  jsonb_strip_nulls(\n    jsonb_build_object(\n      'trace_id', NULLIF($5::text, '')\n    )\n  )\n)\nON CONFLICT (workspace_id, run_id) DO UPDATE\nSET stats_json = COALESCE(ingest_runs.stats_json, '{}'::jsonb)\n  || jsonb_strip_nulls(\n    jsonb_build_object(\n      'trace_id', NULLIF($5::text, '')\n    )\n  );\n\nSELECT $1::uuid AS workspace_id, $2::text AS run_id;",
         "options": {
-          "queryReplacement": "={{$json.workspace_id}}, {{$json.run_id}}, {{$json.endpoint_id}}, {{$json.now_ts}}"
+          "queryReplacement": "={{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.workspace_id ? $items('Push Build Context')[0].json.workspace_id : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.run_id ? $items('Push Build Context')[0].json.run_id : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.endpoint_id ? $items('Push Build Context')[0].json.endpoint_id : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.now_ts ? $items('Push Build Context')[0].json.now_ts : \"\"}}, {{$items('Push Build Context')[0] && $items('Push Build Context')[0].json.normalized_payload && $items('Push Build Context')[0].json.normalized_payload.trace_id ? $items('Push Build Context')[0].json.normalized_payload.trace_id : \"\"}}"
         }
       },
       "id": "wf01-push-start-run",
@@ -362,7 +364,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst normalizeTags = (value) => {\n  if (!Array.isArray(value)) return [];\n  return value\n    .map((tag) => toStringOrNull(tag))\n    .filter(Boolean);\n};\n\nconst workspaceId = toStringOrNull(body?.workspace_id);\nconst sourceId = toStringOrNull(body?.source_id);\nconst runId =\n  toStringOrNull(body?.ingest_run_id) ??\n  'ingest-pull-' + Date.now() + '-' + Math.random().toString(16).slice(2, 10);\nconst nowTs = new Date().toISOString();\n\nconst rawItems = Array.isArray(body?.items) ? body.items : [];\n\nconst normalizeItem = (itemRaw) => {\n  if (!itemRaw || typeof itemRaw !== 'object') return null;\n\n  const payloadObject =\n    itemRaw?.payload && typeof itemRaw.payload === 'object' && !Array.isArray(itemRaw.payload)\n      ? itemRaw.payload\n      : {};\n\n  const renderedText = toStringOrNull(itemRaw?.rendered_text) ?? toStringOrNull(payloadObject?.text) ?? '';\n\n  const normalizedItem = {\n    hash_version: Number.isInteger(Number(itemRaw?.hash_version)) ? Number(itemRaw.hash_version) : 1,\n    content_hash: toStringOrNull(itemRaw?.content_hash),\n    source_ref: toStringOrNull(itemRaw?.source_ref),\n    payload: payloadObject,\n    rendered_text: renderedText,\n    tags: normalizeTags(itemRaw?.tags),\n    trace_id: toStringOrNull(itemRaw?.trace_id),\n    ingest_run_id: runId,\n    source:\n      itemRaw?.source && typeof itemRaw.source === 'object' && !Array.isArray(itemRaw.source)\n        ? itemRaw.source\n        : {\n            kind: 'pull',\n            source_id: sourceId,\n          },\n    cursor_to: toStringOrNull(itemRaw?.cursor_to) ?? toStringOrNull(itemRaw?.cursor),\n  };\n\n  if (normalizedItem.content_hash === null) delete normalizedItem.content_hash;\n  if (normalizedItem.source_ref === null) delete normalizedItem.source_ref;\n  if (normalizedItem.trace_id === null) delete normalizedItem.trace_id;\n  if (normalizedItem.cursor_to === null) delete normalizedItem.cursor_to;\n\n  return normalizedItem;\n};\n\nconst normalizedItems = rawItems\n  .map((item) => normalizeItem(item))\n  .filter(Boolean);\n\nreturn [{\n  json: {\n    kind: 'pull',\n    workspace_id: workspaceId,\n    source_id: sourceId,\n    run_id: runId,\n    now_ts: nowTs,\n    items_normalized: normalizedItems,\n    items_count: normalizedItems.length,\n  },\n}];"
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst normalizeTags = (value) => {\n  if (!Array.isArray(value)) return [];\n  return value\n    .map((tag) => toStringOrNull(tag))\n    .filter(Boolean);\n};\n\nconst workspaceId = toStringOrNull(body?.workspace_id);\nconst sourceId = toStringOrNull(body?.source_id);\nconst runId =\n  toStringOrNull(body?.ingest_run_id) ??\n  'ingest-pull-' + Date.now() + '-' + Math.random().toString(16).slice(2, 10);\nconst nowTs = new Date().toISOString();\n\nconst rawItems = Array.isArray(body?.items) ? body.items : [];\n\nconst normalizeItem = (itemRaw) => {\n  if (!itemRaw || typeof itemRaw !== 'object') return null;\n\n  const payloadObject =\n    itemRaw?.payload && typeof itemRaw.payload === 'object' && !Array.isArray(itemRaw.payload)\n      ? itemRaw.payload\n      : {};\n\n  const renderedText = toStringOrNull(itemRaw?.rendered_text) ?? toStringOrNull(payloadObject?.text) ?? '';\n\n  const normalizedItem = {\n    hash_version: Number.isInteger(Number(itemRaw?.hash_version)) ? Number(itemRaw.hash_version) : 1,\n    content_hash: toStringOrNull(itemRaw?.content_hash),\n    source_ref: toStringOrNull(itemRaw?.source_ref),\n    payload: payloadObject,\n    rendered_text: renderedText,\n    tags: normalizeTags(itemRaw?.tags),\n    trace_id: toStringOrNull(itemRaw?.trace_id),\n    ingest_run_id: runId,\n    source:\n      itemRaw?.source && typeof itemRaw.source === 'object' && !Array.isArray(itemRaw.source)\n        ? itemRaw.source\n        : {\n            kind: 'pull',\n            source_id: sourceId,\n          },\n    cursor_to: toStringOrNull(itemRaw?.cursor_to) ?? toStringOrNull(itemRaw?.cursor),\n  };\n\n  if (normalizedItem.content_hash === null) delete normalizedItem.content_hash;\n  if (normalizedItem.source_ref === null) delete normalizedItem.source_ref;\n  if (normalizedItem.trace_id === null) delete normalizedItem.trace_id;\n  if (normalizedItem.cursor_to === null) delete normalizedItem.cursor_to;\n\n  return normalizedItem;\n};\n\nconst normalizedItems = rawItems\n  .map((item) => normalizeItem(item))\n  .filter(Boolean);\n\nconst traceIdSet = new Set();\nfor (const item of normalizedItems) {\n  const traceId = toStringOrNull(item?.trace_id);\n  if (traceId) traceIdSet.add(traceId);\n}\nconst traceIds = Array.from(traceIdSet);\n\nconst requestTraceId = toStringOrNull(body?.trace_id);\nconst runTraceId = requestTraceId ?? traceIds[0] ?? null;\n\nconst ingestRunMeta = {};\nif (runTraceId) ingestRunMeta.trace_id = runTraceId;\nif (traceIds.length > 0) {\n  ingestRunMeta.trace_ids = traceIds;\n  ingestRunMeta.trace_ids_count = traceIds.length;\n}\n\nreturn [{\n  json: {\n    kind: 'pull',\n    workspace_id: workspaceId,\n    source_id: sourceId,\n    run_id: runId,\n    now_ts: nowTs,\n    run_trace_id: runTraceId,\n    ingest_run_meta: ingestRunMeta,\n    items_normalized: normalizedItems,\n    items_count: normalizedItems.length,\n  },\n}];"
       },
       "id": "wf01-pull-normalize",
       "name": "Pull Normalize Input",
@@ -432,7 +434,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $items('Pull Normalize Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'pull',\n    error: {\n      category: 'PERMANENT',\n      scope: 'delivery',\n      code: 'endpoint_not_found',\n      message: 'pull endpoint is not resolved by workspace_id + source_id',\n      raw: {\n        workspace_id: input.workspace_id ?? null,\n        source_id: input.source_id ?? null,\n      },\n    },\n  },\n}];"
+        "jsCode": "const input = $items('Pull Normalize Input')[0]?.json ?? {};\n\nreturn [{\n  json: {\n    ok: false,\n    kind: 'pull',\n    http_status_code: 404,\n    error: {\n      category: 'PERMANENT',\n      scope: 'endpoint',\n      code: 'endpoint_not_found',\n      message: 'pull endpoint is not resolved by workspace_id + source_id',\n      raw: {\n        workspace_id: input.workspace_id ?? null,\n        source_id: input.source_id ?? null,\n      },\n    },\n  },\n}];"
       },
       "id": "wf01-pull-endpoint-error",
       "name": "Pull Return Endpoint Error",
@@ -459,9 +461,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO public.ingest_runs (\n  workspace_id,\n  run_id,\n  kind,\n  endpoint_id,\n  source_id,\n  started_at,\n  stats_json\n) VALUES (\n  $1::uuid,\n  $2::text,\n  'pull',\n  $3::uuid,\n  $4::text,\n  $5::timestamptz,\n  '{}'::jsonb\n)\nON CONFLICT (workspace_id, run_id) DO NOTHING;\n\nSELECT $1::uuid AS workspace_id, $2::text AS run_id;",
+        "query": "INSERT INTO public.ingest_runs (\n  workspace_id,\n  run_id,\n  kind,\n  endpoint_id,\n  source_id,\n  started_at,\n  stats_json\n) VALUES (\n  $1::uuid,\n  $2::text,\n  'pull',\n  $3::uuid,\n  $4::text,\n  $5::timestamptz,\n  COALESCE($6::jsonb, '{}'::jsonb)\n)\nON CONFLICT (workspace_id, run_id) DO UPDATE\nSET stats_json = COALESCE(ingest_runs.stats_json, '{}'::jsonb)\n  || COALESCE($6::jsonb, '{}'::jsonb);\n\nSELECT $1::uuid AS workspace_id, $2::text AS run_id;",
         "options": {
-          "queryReplacement": "={{$json.workspace_id}}, {{$json.run_id}}, {{$json.endpoint_id}}, {{$json.source_id}}, {{$json.now_ts}}"
+          "queryReplacement": "={{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.workspace_id ? $items('Pull Build Context')[0].json.workspace_id : \"\"}}, {{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.run_id ? $items('Pull Build Context')[0].json.run_id : \"\"}}, {{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.endpoint_id ? $items('Pull Build Context')[0].json.endpoint_id : \"\"}}, {{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.source_id ? $items('Pull Build Context')[0].json.source_id : \"\"}}, {{$items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.now_ts ? $items('Pull Build Context')[0].json.now_ts : \"\"}}, {{ JSON.stringify(($items('Pull Build Context')[0] && $items('Pull Build Context')[0].json.ingest_run_meta) || {}) }}"
         }
       },
       "id": "wf01-pull-start-run",
@@ -610,7 +612,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return null;\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;\n  } catch {\n    return null;\n  }\n};\n\nconst fromDb = parseObject(input.result_json);\nif (fromDb) {\n  return [{ json: fromDb }];\n}\n\nif (input.result_payload && typeof input.result_payload === 'object') {\n  return [{ json: input.result_payload }];\n}\n\nif (input.ok === true || input.ok === false) {\n  return [{ json: input }];\n}\n\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'ingest_output_unexpected',\n      message: '01_ingest returned unexpected payload shape',\n      raw: input,\n    },\n  },\n}];"
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return null;\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;\n  } catch {\n    return null;\n  }\n};\n\nconst deriveHttpStatusCode = (payload) => {\n  if (!payload || typeof payload !== 'object') return 500;\n  if (payload.ok === true) return 200;\n\n  const error = payload.error && typeof payload.error === 'object' ? payload.error : {};\n  const code = String(error.code ?? '').trim();\n  const category = String(error.category ?? '').toUpperCase();\n\n  if (code === 'missing_endpoint_secret') return 401;\n  if (code === 'endpoint_auth_failed') return 403;\n  if (code === 'endpoint_not_found') return 404;\n\n  if (category === 'TRANSIENT') return 503;\n  if (payload.ok === false) return 400;\n\n  return 500;\n};\n\nconst withHttpStatus = (payload) => {\n  const body = payload && typeof payload === 'object'\n    ? { ...payload }\n    : {\n        ok: false,\n        error: {\n          category: 'TRANSIENT',\n          scope: 'platform',\n          code: 'ingest_output_unexpected',\n          message: '01_ingest returned non-object payload',\n          raw: payload,\n        },\n      };\n\n  const explicit = Number(body.http_status_code);\n  if (Number.isInteger(explicit) && explicit >= 100 && explicit <= 599) {\n    body.http_status_code = explicit;\n    return body;\n  }\n\n  body.http_status_code = deriveHttpStatusCode(body);\n  return body;\n};\n\nconst fromDb = parseObject(input.result_json);\nif (fromDb) {\n  return [{ json: withHttpStatus(fromDb) }];\n}\n\nif (input.result_payload && typeof input.result_payload === 'object') {\n  return [{ json: withHttpStatus(input.result_payload) }];\n}\n\nif (input.ok === true || input.ok === false) {\n  return [{ json: withHttpStatus(input) }];\n}\n\nreturn [{\n  json: withHttpStatus({\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'ingest_output_unexpected',\n      message: '01_ingest returned unexpected payload shape',\n      raw: input,\n    },\n  }),\n}];"
       },
       "id": "wf01-finalize-output",
       "name": "Finalize 01_ingest Output",
@@ -618,6 +620,22 @@
       "typeVersion": 2,
       "position": [
         220,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseCode": "={{ Number($json.http_status_code || 200) }}"
+        }
+      },
+      "id": "wf01-respond-webhook",
+      "name": "Respond 01_ingest Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        440,
         -80
       ]
     }
@@ -983,6 +1001,17 @@
         [
           {
             "node": "Finalize 01_ingest Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize 01_ingest Output": {
+      "main": [
+        [
+          {
+            "node": "Respond 01_ingest Webhook",
             "type": "main",
             "index": 0
           }

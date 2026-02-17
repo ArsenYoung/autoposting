@@ -1,0 +1,241 @@
+{
+  "name": "03_monitor",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "wf03-monitor",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf03-webhook-trigger",
+      "name": "03 Monitor Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1920,
+        120
+      ],
+      "webhookId": "wf03-monitor"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "wf03-cron-trigger",
+      "name": "03 Monitor Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1920,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const src = $input.first()?.json ?? {};\nconst body = src.body && typeof src.body === 'object' ? src.body : src;\n\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\n\nconst toStringOrNull = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst toPositiveInt = (value, fallback) => {\n  const num = Number(value);\n  if (!Number.isFinite(num) || num <= 0) return fallback;\n  return Math.floor(num);\n};\n\nconst runId =\n  toStringOrNull(body?.run_id) ??\n  toStringOrNull(body?.test_run_id) ??\n  `monitor-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;\n\nreturn [{\n  json: {\n    run_id: runId,\n    workspace_id: toStringOrNull(body?.workspace_id),\n    now_ts: new Date().toISOString(),\n    failed_permanent_threshold: toPositiveInt(\n      body?.failed_permanent_threshold ?? env.ALERT_FAILED_PERMANENT,\n      5,\n    ),\n    paused_channels_threshold: toPositiveInt(\n      body?.paused_channels_threshold ?? env.ALERT_PAUSED_CHANNELS,\n      10,\n    ),\n  },\n}];"
+      },
+      "id": "wf03-normalize-input",
+      "name": "Normalize Monitor Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1680,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.recover_sending_leases(\n  NULLIF($1::text, '__all_workspaces__')::uuid,\n  COALESCE(NULLIF($2::text, '')::timestamptz, now())\n) AS recovered_sending;",
+        "options": {
+          "queryReplacement": "={{$items('Normalize Monitor Input')[0]?.json?.workspace_id || \"__all_workspaces__\"}}, {{$items('Normalize Monitor Input')[0]?.json?.now_ts}}"
+        }
+      },
+      "id": "wf03-db-recover-sending",
+      "name": "DB Recover Sending Leases",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1440,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT\n    NULLIF($1::text, '__all_workspaces__')::uuid AS workspace_id,\n    COALESCE(NULLIF($2::text, '')::timestamptz, now()) AS now_ts\n),\nstale AS (\n  SELECT d.workspace_id, d.delivery_id, d.message_id, d.channel_id, d.attempt\n  FROM public.deliveries d\n  CROSS JOIN params p\n  WHERE d.status = 'claimed'::public.delivery_status\n    AND COALESCE(d.lease_until, '-infinity'::timestamptz) < p.now_ts\n    AND (p.workspace_id IS NULL OR d.workspace_id = p.workspace_id)\n  FOR UPDATE SKIP LOCKED\n),\nupdated AS (\n  UPDATE public.deliveries d\n  SET status = 'retry'::public.delivery_status,\n      next_retry_at = p.now_ts,\n      claim_token = NULL,\n      lease_owner = NULL,\n      sending_lease_until = NULL,\n      lease_until = NULL,\n      updated_at = p.now_ts\n  FROM stale s\n  CROSS JOIN params p\n  WHERE d.workspace_id = s.workspace_id\n    AND d.delivery_id = s.delivery_id\n  RETURNING d.workspace_id, d.delivery_id, d.message_id, d.channel_id, d.attempt\n),\nemit AS (\n  SELECT public._emit_event(\n    u.workspace_id,\n    'claimed_lease_expired',\n    'error'::public.event_result,\n    u.delivery_id,\n    u.message_id,\n    u.channel_id,\n    u.attempt,\n    jsonb_build_object('code', 'claimed_lease_expired'),\n    '{}'::jsonb,\n    NULL\n  )\n  FROM updated u\n)\nSELECT COUNT(*)::integer AS recovered_claimed\nFROM updated;",
+        "options": {
+          "queryReplacement": "={{$items('Normalize Monitor Input')[0]?.json?.workspace_id || \"__all_workspaces__\"}}, {{$items('Normalize Monitor Input')[0]?.json?.now_ts}}"
+        }
+      },
+      "id": "wf03-db-recover-claimed",
+      "name": "DB Recover Claimed Leases",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1200,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n  SELECT\n    NULLIF($1::text, '__all_workspaces__')::uuid AS workspace_id,\n    COALESCE(NULLIF($2::text, '')::timestamptz, now()) AS now_ts\n),\nstatus_counts AS (\n  SELECT d.status::text AS status, COUNT(*)::integer AS cnt\n  FROM public.deliveries d\n  CROSS JOIN params p\n  WHERE p.workspace_id IS NULL OR d.workspace_id = p.workspace_id\n  GROUP BY d.status\n),\nagg AS (\n  SELECT COALESCE(jsonb_object_agg(sc.status, sc.cnt), '{}'::jsonb) AS by_status\n  FROM status_counts sc\n),\nfailed_perm AS (\n  SELECT COUNT(*)::integer AS failed_permanent_10m\n  FROM public.deliveries d\n  CROSS JOIN params p\n  WHERE d.status = 'failed_permanent'::public.delivery_status\n    AND d.updated_at >= p.now_ts - interval '10 minutes'\n    AND (p.workspace_id IS NULL OR d.workspace_id = p.workspace_id)\n),\npaused AS (\n  SELECT COUNT(*)::integer AS paused_channels\n  FROM public.channels c\n  CROSS JOIN params p\n  WHERE COALESCE(c.paused_until, '-infinity'::timestamptz) > p.now_ts\n    AND (p.workspace_id IS NULL OR c.workspace_id = p.workspace_id)\n),\ndead AS (\n  SELECT COUNT(*)::integer AS dead_deliveries\n  FROM public.deliveries d\n  CROSS JOIN params p\n  WHERE d.status = 'dead'::public.delivery_status\n    AND (p.workspace_id IS NULL OR d.workspace_id = p.workspace_id)\n)\nSELECT\n  agg.by_status,\n  failed_perm.failed_permanent_10m,\n  paused.paused_channels,\n  dead.dead_deliveries\nFROM agg, failed_perm, paused, dead;",
+        "options": {
+          "queryReplacement": "={{$items('Normalize Monitor Input')[0]?.json?.workspace_id || \"__all_workspaces__\"}}, {{$items('Normalize Monitor Input')[0]?.json?.now_ts}}"
+        }
+      },
+      "id": "wf03-db-snapshot",
+      "name": "DB Build Monitor Snapshot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -960,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run = $items('Normalize Monitor Input')[0]?.json ?? {};\nconst sendingRow = $items('DB Recover Sending Leases')[0]?.json ?? {};\nconst claimedRow = $items('DB Recover Claimed Leases')[0]?.json ?? {};\nconst snapshotRow = $items('DB Build Monitor Snapshot')[0]?.json ?? {};\n\nconst toNumber = (value, fallback = 0) => {\n  const num = Number(value);\n  return Number.isFinite(num) ? num : fallback;\n};\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst byStatus = parseObject(snapshotRow.by_status);\nconst deadDeliveries = toNumber(snapshotRow.dead_deliveries, toNumber(byStatus.dead, 0));\nconst failedPermanent10m = toNumber(snapshotRow.failed_permanent_10m, 0);\nconst pausedChannels = toNumber(snapshotRow.paused_channels, 0);\n\nconst failedThreshold = toNumber(run.failed_permanent_threshold, 5);\nconst pausedThreshold = toNumber(run.paused_channels_threshold, 10);\n\nconst alertReasons = [];\nif (deadDeliveries > 0) alertReasons.push('dead_deliveries');\nif (failedPermanent10m > failedThreshold) alertReasons.push('failed_permanent_threshold');\nif (pausedChannels > pausedThreshold) alertReasons.push('paused_channels_threshold');\n\nconst recoveredSending = toNumber(sendingRow.recovered_sending, 0);\nconst recoveredClaimed = toNumber(claimedRow.recovered_claimed, 0);\nif (recoveredSending > 0) alertReasons.push('sending_leases_recovered');\nif (recoveredClaimed > 0) alertReasons.push('claimed_leases_recovered');\n\nreturn [{\n  json: {\n    ok: true,\n    run_id: run.run_id ?? null,\n    workspace_id: run.workspace_id ?? null,\n    recovered_sending_leases: recoveredSending,\n    recovered_claimed_leases: recoveredClaimed,\n    snapshot: {\n      by_status: byStatus,\n      dead_deliveries: deadDeliveries,\n      failed_permanent_10m: failedPermanent10m,\n      paused_channels: pausedChannels,\n    },\n    alerts: {\n      has_alerts: alertReasons.length > 0,\n      reasons: alertReasons,\n      thresholds: {\n        failed_permanent_threshold: failedThreshold,\n        paused_channels_threshold: pausedThreshold,\n      },\n    },\n  },\n}];"
+      },
+      "id": "wf03-build-monitor-output",
+      "name": "Build Monitor Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first()?.json ?? {};\n\nif (input.ok === true || input.ok === false) {\n  return [{ json: input }];\n}\n\nreturn [{\n  json: {\n    ok: false,\n    error: {\n      category: 'TRANSIENT',\n      scope: 'platform',\n      code: 'monitor_output_unexpected',\n      message: '03_monitor returned unexpected payload shape',\n      raw: input,\n    },\n  },\n}];"
+      },
+      "id": "wf03-finalize-output",
+      "name": "Finalize 03_monitor Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "03 Monitor Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Monitor Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Monitor Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Monitor Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Monitor Input": {
+      "main": [
+        [
+          {
+            "node": "DB Recover Sending Leases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Recover Sending Leases": {
+      "main": [
+        [
+          {
+            "node": "DB Recover Claimed Leases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Recover Claimed Leases": {
+      "main": [
+        [
+          {
+            "node": "DB Build Monitor Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Build Monitor Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Build Monitor Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Monitor Output": {
+      "main": [
+        [
+          {
+            "node": "Finalize 03_monitor Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "pinData": null,
+  "versionId": "wf03-monitor-v1"
+}

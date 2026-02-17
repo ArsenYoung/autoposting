@@ -33,7 +33,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const src = $input.first()?.json?.body ?? $input.first()?.json ?? {};\nconst delivery = src.delivery ?? {};\nconst channel = src.channel ?? {};\nconst payload = delivery.payload ?? {};\nconst sourceMedia = Array.isArray(payload.media) ? payload.media : [];\n\nconst renderedText = String(\n  delivery.rendered_text ?? src.rendered_text ?? payload.text ?? '',\n);\n\nconst parseModeRaw = String(\n  delivery.meta?.parse_mode ?? src.meta?.parse_mode ?? 'None',\n);\nlet maxFormat = null;\nif (parseModeRaw === 'HTML') maxFormat = 'html';\nif (parseModeRaw === 'Markdown' || parseModeRaw === 'MarkdownV2') maxFormat = 'markdown';\n\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\n\nconst authHeaderName = String(\n  channel.auth_header_name ?? env.MAX_AUTH_HEADER ?? 'Authorization',\n);\nconst authHeaderValue = String(\n  channel.max_auth ?? channel.auth_token ?? env.MAX_AUTH_VALUE ?? '',\n).trim();\n\nlet baseUrl = String(\n  channel.max_base_url ??\n    channel.base_url ??\n    env.MAX_API_BASE_URL ??\n    'https://platform-api.max.ru',\n);\nwhile (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst renderMeta = parseObject(\n  delivery.render_meta ?? src.render_meta ?? payload.render_meta ?? {},\n);\n\nconst rawSeriesProgressCandidates = [\n  renderMeta.series_progress,\n  delivery.series_progress,\n  src.series_progress,\n  payload.series_progress,\n  delivery.meta?.series_progress,\n  src.meta?.series_progress,\n]\n  .map(parseObject)\n  .filter((value) => Object.keys(value).length > 0);\n\nconst toIndex = (value) => {\n  if (value === null || value === undefined || value === '') return null;\n  const num = Number(value);\n  if (!Number.isFinite(num)) return null;\n  if (!Number.isInteger(num) || num < 0) return null;\n  return num;\n};\n\nconst toNonEmptyString = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst ackedSet = new Set();\nconst providerMessageIds = [];\nconst providerMessageIdSet = new Set();\n\nconst pushProviderMessageId = (value) => {\n  const text = toNonEmptyString(value);\n  if (!text || providerMessageIdSet.has(text)) return;\n  providerMessageIdSet.add(text);\n  providerMessageIds.push(text);\n};\n\nfor (const progress of rawSeriesProgressCandidates) {\n  const ackedIndexes = Array.isArray(progress.acked_indexes)\n    ? progress.acked_indexes\n    : [];\n  for (const value of ackedIndexes) {\n    const idx = toIndex(value);\n    if (idx !== null) ackedSet.add(idx);\n  }\n\n  const sentIndexes = Array.isArray(progress.sent_indexes)\n    ? progress.sent_indexes\n    : [];\n  for (const value of sentIndexes) {\n    const idx = toIndex(value);\n    if (idx !== null) ackedSet.add(idx);\n  }\n\n  const sentItems = Array.isArray(progress.sent_items) ? progress.sent_items : [];\n  for (const item of sentItems) {\n    if (item && typeof item === 'object') {\n      const idx = toIndex(item.index ?? item.media_index ?? item.item_index);\n      if (idx !== null) ackedSet.add(idx);\n      pushProviderMessageId(item.provider_message_id ?? item.message_id ?? item.id);\n      continue;\n    }\n\n    const idx = toIndex(item);\n    if (idx !== null) ackedSet.add(idx);\n  }\n\n  const progressMessageIds = Array.isArray(progress.provider_message_ids)\n    ? progress.provider_message_ids\n    : [];\n  for (const value of progressMessageIds) {\n    if (value && typeof value === 'object') {\n      pushProviderMessageId(\n        value.provider_message_id ?? value.message_id ?? value.id,\n      );\n    } else {\n      pushProviderMessageId(value);\n    }\n  }\n}\n\nconst seriesProgress = {\n  acked_indexes: Array.from(ackedSet).sort((a, b) => a - b),\n  provider_message_ids: providerMessageIds,\n};\n\nconst normalizedMedia = sourceMedia\n  .map((itemRaw, index) => {\n    const item = itemRaw && typeof itemRaw === 'object' ? itemRaw : null;\n    if (!item) return null;\n\n    return {\n      index,\n      blob_ref: item.blob_ref ?? null,\n      type: item.type ?? null,\n      kind: item.kind ?? null,\n      origin_url: item.origin_url ?? null,\n      url: item.url ?? null,\n      media_url: item.media_url ?? null,\n      upload_id: item.upload_id ?? null,\n      upload_token: item.upload_token ?? null,\n      attachment_id: item.attachment_id ?? null,\n      file_id: item.file_id ?? null,\n      token: item.token ?? null,\n      max_upload_id: item.max_upload_id ?? null,\n    };\n  })\n  .filter(Boolean);\n\nconst mediaBlobRefs = normalizedMedia\n  .map((item) => (typeof item?.blob_ref === 'string' ? item.blob_ref.trim() : ''))\n  .filter((blobRef) => blobRef.length > 0);\n\nreturn [\n  {\n    json: {\n      workspace_id: src.workspace_id ?? null,\n      delivery,\n      channel,\n      target_id: channel.target_id ?? delivery.target_id ?? src.target_id ?? null,\n      rendered_text: renderedText,\n      media: normalizedMedia,\n      media_blob_refs: mediaBlobRefs,\n      series_progress: seriesProgress,\n      max_format: maxFormat,\n      max_base_url: baseUrl,\n      auth_header_name: authHeaderName,\n      auth_header_value: authHeaderValue,\n    },\n  },\n];"
+        "jsCode": "const src = $input.first()?.json?.body ?? $input.first()?.json ?? {};\nconst delivery = src.delivery ?? {};\nconst channelInput = src.channel ?? {};\nconst payload = delivery.payload ?? {};\nconst sourceMedia = Array.isArray(payload.media) ? payload.media : [];\n\nconst renderedText = String(\n  delivery.rendered_text ?? src.rendered_text ?? payload.text ?? '',\n);\n\nconst parseModeRaw = String(\n  delivery.meta?.parse_mode ?? src.meta?.parse_mode ?? 'None',\n);\nlet maxFormat = null;\nif (parseModeRaw === 'HTML') maxFormat = 'html';\nif (parseModeRaw === 'Markdown' || parseModeRaw === 'MarkdownV2') maxFormat = 'markdown';\n\nconst env = typeof process !== 'undefined' && process.env ? process.env : {};\n\nconst channelId =\n  channelInput.channel_id ?? delivery.channel_id ?? src.channel_id ?? null;\nconst authRef = channelInput.auth_ref ?? src.auth_ref ?? null;\n\nconst channel = {\n  ...channelInput,\n  channel_id: channelId,\n  auth_ref: authRef,\n};\n\nconst authHeaderName = String(\n  channel.auth_header_name ?? env.MAX_AUTH_HEADER ?? 'Authorization',\n);\nconst authHeaderValue = String(\n  channel.max_auth ?? channel.auth_token ?? channel.token ?? env.MAX_AUTH_VALUE ?? '',\n).trim();\n\nlet baseUrl = String(\n  channel.max_base_url ??\n    channel.base_url ??\n    env.MAX_API_BASE_URL ??\n    'https://platform-api.max.ru',\n);\nwhile (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);\n\nconst parseObject = (value) => {\n  if (value && typeof value === 'object' && !Array.isArray(value)) return value;\n  if (typeof value !== 'string') return {};\n  try {\n    const parsed = JSON.parse(value);\n    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};\n  } catch {\n    return {};\n  }\n};\n\nconst renderMeta = parseObject(\n  delivery.render_meta ?? src.render_meta ?? payload.render_meta ?? {},\n);\n\nconst rawSeriesProgressCandidates = [\n  renderMeta.series_progress,\n  delivery.series_progress,\n  src.series_progress,\n  payload.series_progress,\n  delivery.meta?.series_progress,\n  src.meta?.series_progress,\n]\n  .map(parseObject)\n  .filter((value) => Object.keys(value).length > 0);\n\nconst toIndex = (value) => {\n  if (value === null || value === undefined || value === '') return null;\n  const num = Number(value);\n  if (!Number.isFinite(num)) return null;\n  if (!Number.isInteger(num) || num < 0) return null;\n  return num;\n};\n\nconst toNonEmptyString = (value) => {\n  if (value === null || value === undefined) return null;\n  const text = String(value).trim();\n  return text ? text : null;\n};\n\nconst ackedSet = new Set();\nconst providerMessageIds = [];\nconst providerMessageIdSet = new Set();\n\nconst pushProviderMessageId = (value) => {\n  const text = toNonEmptyString(value);\n  if (!text || providerMessageIdSet.has(text)) return;\n  providerMessageIdSet.add(text);\n  providerMessageIds.push(text);\n};\n\nfor (const progress of rawSeriesProgressCandidates) {\n  const ackedIndexes = Array.isArray(progress.acked_indexes)\n    ? progress.acked_indexes\n    : [];\n  for (const value of ackedIndexes) {\n    const idx = toIndex(value);\n    if (idx !== null) ackedSet.add(idx);\n  }\n\n  const sentIndexes = Array.isArray(progress.sent_indexes)\n    ? progress.sent_indexes\n    : [];\n  for (const value of sentIndexes) {\n    const idx = toIndex(value);\n    if (idx !== null) ackedSet.add(idx);\n  }\n\n  const sentItems = Array.isArray(progress.sent_items) ? progress.sent_items : [];\n  for (const item of sentItems) {\n    if (item && typeof item === 'object') {\n      const idx = toIndex(item.index ?? item.media_index ?? item.item_index);\n      if (idx !== null) ackedSet.add(idx);\n      pushProviderMessageId(item.provider_message_id ?? item.message_id ?? item.id);\n      continue;\n    }\n\n    const idx = toIndex(item);\n    if (idx !== null) ackedSet.add(idx);\n  }\n\n  const progressMessageIds = Array.isArray(progress.provider_message_ids)\n    ? progress.provider_message_ids\n    : [];\n  for (const value of progressMessageIds) {\n    if (value && typeof value === 'object') {\n      pushProviderMessageId(\n        value.provider_message_id ?? value.message_id ?? value.id,\n      );\n    } else {\n      pushProviderMessageId(value);\n    }\n  }\n}\n\nconst seriesProgress = {\n  acked_indexes: Array.from(ackedSet).sort((a, b) => a - b),\n  provider_message_ids: providerMessageIds,\n};\n\nconst normalizedMedia = sourceMedia\n  .map((itemRaw, index) => {\n    const item = itemRaw && typeof itemRaw === 'object' ? itemRaw : null;\n    if (!item) return null;\n\n    return {\n      index,\n      blob_ref: item.blob_ref ?? null,\n      type: item.type ?? null,\n      kind: item.kind ?? null,\n      origin_url: item.origin_url ?? null,\n      url: item.url ?? null,\n      media_url: item.media_url ?? null,\n      upload_id: item.upload_id ?? null,\n      upload_token: item.upload_token ?? null,\n      attachment_id: item.attachment_id ?? null,\n      file_id: item.file_id ?? null,\n      token: item.token ?? null,\n      max_upload_id: item.max_upload_id ?? null,\n    };\n  })\n  .filter(Boolean);\n\nconst mediaBlobRefs = normalizedMedia\n  .map((item) => (typeof item?.blob_ref === 'string' ? item.blob_ref.trim() : ''))\n  .filter((blobRef) => blobRef.length > 0);\n\nreturn [\n  {\n    json: {\n      workspace_id: src.workspace_id ?? null,\n      delivery,\n      channel,\n      channel_id: channelId,\n      auth_ref: authRef,\n      target_id: channel.target_id ?? delivery.target_id ?? src.target_id ?? null,\n      rendered_text: renderedText,\n      media: normalizedMedia,\n      media_blob_refs: mediaBlobRefs,\n      series_progress: seriesProgress,\n      max_format: maxFormat,\n      max_base_url: baseUrl,\n      auth_header_name: authHeaderName,\n      auth_header_value: authHeaderValue,\n    },\n  },\n];"
       },
       "id": "ae5bbd82-9521-4fd3-a38a-8ad0bee6c652",
       "name": "Normalize Adapter Input",
@@ -211,6 +211,43 @@
         }
       },
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH req AS (\n  SELECT\n    NULLIF($1::text, '')::uuid AS workspace_id,\n    NULLIF($2::text, '') AS channel_id,\n    NULLIF($3::text, '') AS auth_ref\n),\ncandidate AS (\n  SELECT\n    c.auth_ref,\n    c.settings\n  FROM public.channels c\n  JOIN req r\n    ON r.workspace_id = c.workspace_id\n  WHERE c.platform = 'max'\n    AND (\n      (r.channel_id IS NOT NULL AND c.channel_id = r.channel_id)\n      OR (r.channel_id IS NULL AND r.auth_ref IS NOT NULL AND c.auth_ref = r.auth_ref)\n    )\n  ORDER BY\n    CASE\n      WHEN (SELECT channel_id FROM req) IS NOT NULL\n       AND c.channel_id = (SELECT channel_id FROM req) THEN 0\n      ELSE 1\n    END,\n    c.channel_id\n  LIMIT 1\n)\nSELECT\n  COALESCE(candidate.settings->>'max_auth', candidate.settings->>'auth_token', candidate.settings->>'token') AS auth_value,\n  COALESCE(candidate.settings->>'auth_header_name', 'Authorization') AS auth_header_name,\n  COALESCE(candidate.settings->>'max_base_url', candidate.settings->>'base_url') AS max_base_url,\n  candidate.auth_ref AS resolved_auth_ref\nFROM candidate\nUNION ALL\nSELECT\n  NULL::text AS auth_value,\n  NULL::text AS auth_header_name,\n  NULL::text AS max_base_url,\n  NULL::text AS resolved_auth_ref\nWHERE NOT EXISTS (SELECT 1 FROM candidate);",
+        "options": {
+          "queryReplacement": "={{$json.workspace_id}}, {{$json.channel_id || $json.delivery?.channel_id || ''}}, {{$json.auth_ref || $json.channel?.auth_ref || ''}}"
+        }
+      },
+      "id": "max-db-resolve-auth-9b2e1d9a",
+      "name": "DB Resolve MAX Auth",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1168,
+        72
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "x5LyxEPUED2WoWLF",
+          "name": "Neon Autoposting DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $items('Normalize Adapter Input')[0]?.json ?? {};\nconst row = $input.first()?.json ?? {};\n\nconst cleanString = (value) => {\n  if (value === null || value === undefined) return '';\n  return String(value).trim();\n};\n\nconst directAuth = cleanString(base.auth_header_value);\nconst resolvedAuth = cleanString(row.auth_value);\nconst mergedAuth = directAuth || resolvedAuth;\n\nconst directHeaderName = cleanString(base.auth_header_name);\nconst resolvedHeaderName = cleanString(row.auth_header_name);\nconst mergedHeaderName = directHeaderName || resolvedHeaderName || 'Authorization';\n\nlet mergedBaseUrl = cleanString(base.max_base_url) || cleanString(row.max_base_url);\nif (!mergedBaseUrl) mergedBaseUrl = 'https://platform-api.max.ru';\nwhile (mergedBaseUrl.endsWith('/')) mergedBaseUrl = mergedBaseUrl.slice(0, -1);\n\nconst mergedAuthRef = cleanString(base.auth_ref) || cleanString(row.resolved_auth_ref);\n\nreturn [\n  {\n    json: {\n      ...base,\n      auth_ref: mergedAuthRef || null,\n      auth_header_name: mergedHeaderName,\n      auth_header_value: mergedAuth,\n      max_base_url: mergedBaseUrl,\n    },\n  },\n];"
+      },
+      "id": "max-apply-auth-5c2f4a1c",
+      "name": "Apply MAX Auth",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        240
+      ]
     }
   ],
   "pinData": {},
@@ -241,7 +278,7 @@
       "main": [
         [
           {
-            "node": "Can Call MAX API?",
+            "node": "DB Resolve MAX Auth",
             "type": "main",
             "index": 0
           }
@@ -333,6 +370,28 @@
         [
           {
             "node": "Finalize Adapter Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Resolve MAX Auth": {
+      "main": [
+        [
+          {
+            "node": "Apply MAX Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply MAX Auth": {
+      "main": [
+        [
+          {
+            "node": "Can Call MAX API?",
             "type": "main",
             "index": 0
           }
